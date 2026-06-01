@@ -16,9 +16,9 @@ variable "s3_exclusion_regex" {
 }
 
 variable "cache_control_immutable_assets_regex" {
-  description = "Regex to set public,max-age=31536000,immutable on immutable resources"
+  description = "Regex matching content-hashed assets (default: everything under _next/static/, including under a basePath, e.g. docs/_next/static) to set their Cache-Control response header to public,max-age=31536000,immutable"
   type        = string
-  default     = "^.*(\\.next)$"
+  default     = "^(?:.*/)?_next/static/.*$"
 }
 
 variable "force_destroy" {
