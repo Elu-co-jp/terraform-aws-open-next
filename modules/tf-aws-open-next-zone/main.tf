@@ -520,7 +520,7 @@ module "additional_server_function" {
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_bucket_access, null), try(var.additional_server_functions.iam_policies.include_bucket_access, null)), false) == true ? local.cache_bucket_env_variables : {},
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_revalidation_queue_access, null), try(var.additional_server_functions.iam_policies.include_revalidation_queue_access, null)), false) == true ? local.revalidation_queue_env_variables : {},
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_tag_mapping_db_access, null), try(var.additional_server_functions.iam_policies.include_tag_mapping_db_access, null)), false) == true ? local.tag_mapping_env_variables : {},
-    try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.additional_environment_variables, null), try(var.additional_server_functions.iam_policies.additional_environment_variables, null)), {})
+    try(coalesce(try(var.additional_server_functions.function_overrides[each.key].additional_environment_variables, null), try(var.additional_server_functions.additional_environment_variables, null)), {})
   )
 
   architecture   = coalesce(try(var.additional_server_functions.function_overrides[each.key].function_architecture, var.additional_server_functions.function_architecture), "x86_64")
