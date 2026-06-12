@@ -412,7 +412,7 @@ locals {
   aliases      = try(var.domain_config.include_www, false) == true ? flatten([for alias in local.temp_aliases : [alias, "www.${alias}"]]...) : local.temp_aliases
   temp_route53_entries = try(var.domain_config.create_route53_entries, false) == true ? { for hosted_zone in var.domain_config.hosted_zones : join("-", compact([hosted_zone.name, hosted_zone.id, hosted_zone.private_zone])) => {
     name            = join(".", compact([var.domain_config.sub_domain, hosted_zone.name]))
-    zone_id         = coalesce(hosted_zone.id, data.aws_route53_zone.hosted_zone[join("-", compact([hosted_zone.name, hosted_zone.private_zone]))].zone_id)
+    zone_id         = hosted_zone.id != null ? hosted_zone.id : data.aws_route53_zone.hosted_zone[join("-", compact([hosted_zone.name, hosted_zone.private_zone]))].zone_id
     allow_overwrite = var.domain_config.route53_record_allow_overwrite
   } } : {}
   route53_entries = try(var.domain_config.include_www, false) == true ? merge([for name, route53_details in local.temp_route53_entries : { "${name}" = route53_details, "www_${name}" = { name = "www.${route53_details.name}", zone_id = route53_details.zone_id, allow_overwrite = route53_details.allow_overwrite } }]...) : local.temp_route53_entries
