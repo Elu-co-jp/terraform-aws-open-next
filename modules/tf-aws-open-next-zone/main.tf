@@ -487,6 +487,18 @@ resource "aws_lambda_permission" "server_function_url_permission" {
   function_url_auth_type = "AWS_IAM"
 }
 
+# Companion to server_function_url_permission required by the Oct 2025 Lambda Function URL dual-auth change: CloudFront's signed OAC request must be authorized for both lambda:InvokeFunctionUrl and lambda:InvokeFunction.
+resource "aws_lambda_permission" "server_function_invoke_permission" {
+  for_each = try(local.zone_origins["server"].auth, null) == "OAC" ? local.lambda_permissions : {}
+
+  action                 = "lambda:InvokeFunction"
+  function_name          = module.server_function.name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
 module "additional_server_function" {
   for_each = local.additional_server_functions
   source   = "../tf-aws-lambda"
@@ -563,6 +575,22 @@ resource "aws_lambda_permission" "additional_server_function_url_permission" {
   ]...)
 
   action                 = "lambda:InvokeFunctionUrl"
+  function_name          = module.additional_server_function[each.value.name].name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
+# Companion to additional_server_function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "additional_server_function_invoke_permission" {
+  for_each = merge([
+    for key, additional_server_function in local.additional_server_functions : {
+      for lambda_permission_key, lambda_permissions in local.lambda_permissions : "${key}-${lambda_permission_key}" => merge({ name = key }, additional_server_function, lambda_permissions)
+    } if try(var.additional_server_functions.function_overrides[key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "REGIONAL_LAMBDA_WITH_OAC"
+  ]...)
+
+  action                 = "lambda:InvokeFunction"
   function_name          = module.additional_server_function[each.value.name].name
   principal              = "cloudfront.amazonaws.com"
   source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
@@ -724,6 +752,18 @@ resource "aws_lambda_permission" "image_optimisation_function_url_permission" {
   for_each = var.image_optimisation_function.create && lookup(local.auth_options, var.image_optimisation_function.backend_deployment_type, null) == "OAC" ? local.lambda_permissions : {}
 
   action                 = "lambda:InvokeFunctionUrl"
+  function_name          = one(module.image_optimisation_function[*].name)
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
+# Companion to image_optimisation_function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "image_optimisation_function_invoke_permission" {
+  for_each = var.image_optimisation_function.create && lookup(local.auth_options, var.image_optimisation_function.backend_deployment_type, null) == "OAC" ? local.lambda_permissions : {}
+
+  action                 = "lambda:InvokeFunction"
   function_name          = one(module.image_optimisation_function[*].name)
   principal              = "cloudfront.amazonaws.com"
   source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)

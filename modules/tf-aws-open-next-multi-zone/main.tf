@@ -193,6 +193,18 @@ resource "aws_lambda_permission" "function_url_permission" {
   function_url_auth_type = "AWS_IAM"
 }
 
+# Companion to function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "function_invoke_permission" {
+  for_each = local.function_url_permission_details
+
+  action                 = "lambda:InvokeFunction"
+  function_name          = each.value.function_name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution_name == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
 resource "aws_s3_bucket_policy" "shared_distribution_bucket_policy" {
   for_each = var.deployment == "SHARED_DISTRIBUTION" ? { for zone in local.zones : zone.name => zone } : {}
   bucket   = module.website_zone[each.key].bucket_name
