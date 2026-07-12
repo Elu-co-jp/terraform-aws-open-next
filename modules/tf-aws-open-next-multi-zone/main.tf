@@ -163,7 +163,7 @@ module "website_zone" {
   behaviours     = try(coalesce(each.value.behaviours, var.behaviours), null)
   tag_mapping_db = try(coalesce(each.value.tag_mapping_db, var.tag_mapping_db), null)
 
-  website_bucket         = var.deployment != "SHARED_DISTRIBUTION_AND_BUCKET" ? merge(try(coalesce(each.value.website_bucket, var.website_bucket), {}), { deployment = "CREATE", create_bucket_policy = var.deployment == "INDEPENDENT_ZONES" }) : { deployment = "NONE", arn = one(aws_s3_bucket.shared_bucket[*].arn), name = one(aws_s3_bucket.shared_bucket[*].id), region = data.aws_region.current.name, domain_name = one(aws_s3_bucket.shared_bucket[*].bucket_regional_domain_name) }
+  website_bucket         = var.deployment != "SHARED_DISTRIBUTION_AND_BUCKET" ? merge(try(coalesce(each.value.website_bucket, var.website_bucket), {}), { deployment = "CREATE", create_bucket_policy = var.deployment == "INDEPENDENT_ZONES" }) : { deployment = "NONE", arn = one(aws_s3_bucket.shared_bucket[*].arn), name = one(aws_s3_bucket.shared_bucket[*].id), region = data.aws_region.current.region, domain_name = one(aws_s3_bucket.shared_bucket[*].bucket_regional_domain_name) }
   distribution           = var.deployment == "INDEPENDENT_ZONES" ? try(coalesce(each.value.distribution, var.distribution), {}) : { deployment = "NONE", enabled = null, ipv6_enabled = null, http_version = null, price_class = null, geo_restrictions = null, x_forwarded_host_function = null, auth_function = null, lambda_url_oac = null, cache_policy = null, response_headers = null }
   waf                    = try(coalesce(each.value.waf, var.waf), null)
   domain_config          = try(coalesce(each.value.domain_config, var.domain_config), null)

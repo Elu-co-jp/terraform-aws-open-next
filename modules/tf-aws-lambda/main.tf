@@ -177,7 +177,7 @@ resource "aws_iam_policy" "lambda_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ], var.run_at_edge ? ["logs:CreateLogGroup"] : []),
-        "Resource" : var.run_at_edge ? "*" : local.has_log_group_per_function ? "${one(aws_cloudwatch_log_group.lambda_log_group[*].arn)}:*" : "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:${var.cloudwatch_log.name}:*"
+        "Resource" : var.run_at_edge ? "*" : local.has_log_group_per_function ? "${one(aws_cloudwatch_log_group.lambda_log_group[*].arn)}:*" : "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:${var.cloudwatch_log.name}:*"
         "Effect" : "Allow"
       }
       ],

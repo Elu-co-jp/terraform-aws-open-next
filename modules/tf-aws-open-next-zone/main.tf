@@ -9,7 +9,7 @@ locals {
   should_create_website_bucket = var.website_bucket.deployment == "CREATE"
   website_bucket_arn           = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].arn) : var.website_bucket.arn
   website_bucket_name          = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].id) : var.website_bucket.name
-  website_bucket_region        = local.should_create_website_bucket ? data.aws_region.current.name : var.website_bucket.region
+  website_bucket_region        = local.should_create_website_bucket ? data.aws_region.current.region : var.website_bucket.region
   website_bucket_domain_name   = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].bucket_regional_domain_name) : var.website_bucket.domain_name
 
   # Ensure bucket name stays within 63 character limit. If name exceeds limit, truncate and add a hash suffix for uniqueness
@@ -154,7 +154,7 @@ locals {
   }
   revalidation_queue_env_variables = {
     "REVALIDATION_QUEUE_URL" : aws_sqs_queue.revalidation_queue.url,
-    "REVALIDATION_QUEUE_REGION" : data.aws_region.current.name,
+    "REVALIDATION_QUEUE_REGION" : data.aws_region.current.region,
   }
   tag_mapping_env_variables = local.isr_tag_mapping_db_name != null ? { "CACHE_DYNAMO_TABLE" : local.isr_tag_mapping_db_name } : {}
   server_function_env_variables = merge(
@@ -808,9 +808,8 @@ resource "aws_dynamodb_table" "isr_table" {
   billing_mode   = var.tag_mapping_db.billing_mode
   read_capacity  = var.tag_mapping_db.read_capacity
   write_capacity = var.tag_mapping_db.write_capacity
-
-  hash_key  = "tag"
-  range_key = "path"
+  hash_key       = "tag"
+  range_key      = "path"
 
   attribute {
     name = "tag"
@@ -829,11 +828,19 @@ resource "aws_dynamodb_table" "isr_table" {
 
   global_secondary_index {
     name            = "revalidate"
-    hash_key        = "path"
-    range_key       = "revalidatedAt"
     projection_type = "ALL"
     read_capacity   = try(coalesce(var.tag_mapping_db.revalidate_gsi.read_capacity, var.tag_mapping_db.read_capacity), null)
     write_capacity  = try(coalesce(var.tag_mapping_db.revalidate_gsi.write_capacity, var.tag_mapping_db.write_capacity), null)
+
+    key_schema {
+      attribute_name = "path"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "revalidatedAt"
+      key_type       = "RANGE"
+    }
   }
 }
 
