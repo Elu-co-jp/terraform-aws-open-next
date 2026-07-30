@@ -9,7 +9,7 @@ locals {
   should_create_website_bucket = var.website_bucket.deployment == "CREATE"
   website_bucket_arn           = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].arn) : var.website_bucket.arn
   website_bucket_name          = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].id) : var.website_bucket.name
-  website_bucket_region        = local.should_create_website_bucket ? data.aws_region.current.name : var.website_bucket.region
+  website_bucket_region        = local.should_create_website_bucket ? data.aws_region.current.region : var.website_bucket.region
   website_bucket_domain_name   = local.should_create_website_bucket ? one(aws_s3_bucket.bucket[*].bucket_regional_domain_name) : var.website_bucket.domain_name
 
   # Ensure bucket name stays within 63 character limit. If name exceeds limit, truncate and add a hash suffix for uniqueness
@@ -154,7 +154,7 @@ locals {
   }
   revalidation_queue_env_variables = {
     "REVALIDATION_QUEUE_URL" : aws_sqs_queue.revalidation_queue.url,
-    "REVALIDATION_QUEUE_REGION" : data.aws_region.current.name,
+    "REVALIDATION_QUEUE_REGION" : data.aws_region.current.region,
   }
   tag_mapping_env_variables = local.isr_tag_mapping_db_name != null ? { "CACHE_DYNAMO_TABLE" : local.isr_tag_mapping_db_name } : {}
   server_function_env_variables = merge(
@@ -487,6 +487,18 @@ resource "aws_lambda_permission" "server_function_url_permission" {
   function_url_auth_type = "AWS_IAM"
 }
 
+# Companion to server_function_url_permission required by the Oct 2025 Lambda Function URL dual-auth change: CloudFront's signed OAC request must be authorized for both lambda:InvokeFunctionUrl and lambda:InvokeFunction.
+resource "aws_lambda_permission" "server_function_invoke_permission" {
+  for_each = try(local.zone_origins["server"].auth, null) == "OAC" ? local.lambda_permissions : {}
+
+  action                 = "lambda:InvokeFunction"
+  function_name          = module.server_function.name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
 module "additional_server_function" {
   for_each = local.additional_server_functions
   source   = "../tf-aws-lambda"
@@ -563,6 +575,22 @@ resource "aws_lambda_permission" "additional_server_function_url_permission" {
   ]...)
 
   action                 = "lambda:InvokeFunctionUrl"
+  function_name          = module.additional_server_function[each.value.name].name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
+# Companion to additional_server_function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "additional_server_function_invoke_permission" {
+  for_each = merge([
+    for key, additional_server_function in local.additional_server_functions : {
+      for lambda_permission_key, lambda_permissions in local.lambda_permissions : "${key}-${lambda_permission_key}" => merge({ name = key }, additional_server_function, lambda_permissions)
+    } if try(var.additional_server_functions.function_overrides[key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "REGIONAL_LAMBDA_WITH_OAC"
+  ]...)
+
+  action                 = "lambda:InvokeFunction"
   function_name          = module.additional_server_function[each.value.name].name
   principal              = "cloudfront.amazonaws.com"
   source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
@@ -731,6 +759,18 @@ resource "aws_lambda_permission" "image_optimisation_function_url_permission" {
   function_url_auth_type = "AWS_IAM"
 }
 
+# Companion to image_optimisation_function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "image_optimisation_function_invoke_permission" {
+  for_each = var.image_optimisation_function.create && lookup(local.auth_options, var.image_optimisation_function.backend_deployment_type, null) == "OAC" ? local.lambda_permissions : {}
+
+  action                 = "lambda:InvokeFunction"
+  function_name          = one(module.image_optimisation_function[*].name)
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
 # Revalidation Function
 
 module "revalidation_function" {
@@ -808,9 +848,8 @@ resource "aws_dynamodb_table" "isr_table" {
   billing_mode   = var.tag_mapping_db.billing_mode
   read_capacity  = var.tag_mapping_db.read_capacity
   write_capacity = var.tag_mapping_db.write_capacity
-
-  hash_key  = "tag"
-  range_key = "path"
+  hash_key       = "tag"
+  range_key      = "path"
 
   attribute {
     name = "tag"
@@ -829,11 +868,19 @@ resource "aws_dynamodb_table" "isr_table" {
 
   global_secondary_index {
     name            = "revalidate"
-    hash_key        = "path"
-    range_key       = "revalidatedAt"
     projection_type = "ALL"
     read_capacity   = try(coalesce(var.tag_mapping_db.revalidate_gsi.read_capacity, var.tag_mapping_db.read_capacity), null)
     write_capacity  = try(coalesce(var.tag_mapping_db.revalidate_gsi.write_capacity, var.tag_mapping_db.write_capacity), null)
+
+    key_schema {
+      attribute_name = "path"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "revalidatedAt"
+      key_type       = "RANGE"
+    }
   }
 }
 

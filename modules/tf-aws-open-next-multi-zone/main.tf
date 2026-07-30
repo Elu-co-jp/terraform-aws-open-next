@@ -163,7 +163,7 @@ module "website_zone" {
   behaviours     = try(coalesce(each.value.behaviours, var.behaviours), null)
   tag_mapping_db = try(coalesce(each.value.tag_mapping_db, var.tag_mapping_db), null)
 
-  website_bucket         = var.deployment != "SHARED_DISTRIBUTION_AND_BUCKET" ? merge(try(coalesce(each.value.website_bucket, var.website_bucket), {}), { deployment = "CREATE", create_bucket_policy = var.deployment == "INDEPENDENT_ZONES" }) : { deployment = "NONE", arn = one(aws_s3_bucket.shared_bucket[*].arn), name = one(aws_s3_bucket.shared_bucket[*].id), region = data.aws_region.current.name, domain_name = one(aws_s3_bucket.shared_bucket[*].bucket_regional_domain_name) }
+  website_bucket         = var.deployment != "SHARED_DISTRIBUTION_AND_BUCKET" ? merge(try(coalesce(each.value.website_bucket, var.website_bucket), {}), { deployment = "CREATE", create_bucket_policy = var.deployment == "INDEPENDENT_ZONES" }) : { deployment = "NONE", arn = one(aws_s3_bucket.shared_bucket[*].arn), name = one(aws_s3_bucket.shared_bucket[*].id), region = data.aws_region.current.region, domain_name = one(aws_s3_bucket.shared_bucket[*].bucket_regional_domain_name) }
   distribution           = var.deployment == "INDEPENDENT_ZONES" ? try(coalesce(each.value.distribution, var.distribution), {}) : { deployment = "NONE", enabled = null, ipv6_enabled = null, http_version = null, price_class = null, geo_restrictions = null, x_forwarded_host_function = null, auth_function = null, lambda_url_oac = null, cache_policy = null, response_headers = null }
   waf                    = try(coalesce(each.value.waf, var.waf), null)
   domain_config          = try(coalesce(each.value.domain_config, var.domain_config), null)
@@ -186,6 +186,18 @@ resource "aws_lambda_permission" "function_url_permission" {
   for_each = local.function_url_permission_details
 
   action                 = "lambda:InvokeFunctionUrl"
+  function_name          = each.value.function_name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = each.value.distribution_name == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)
+  qualifier              = each.value.alias
+  function_url_auth_type = "AWS_IAM"
+}
+
+# Companion to function_url_permission for the Oct 2025 Lambda Function URL dual-auth change.
+resource "aws_lambda_permission" "function_invoke_permission" {
+  for_each = local.function_url_permission_details
+
+  action                 = "lambda:InvokeFunction"
   function_name          = each.value.function_name
   principal              = "cloudfront.amazonaws.com"
   source_arn             = each.value.distribution_name == "production" ? one(module.public_resources[*].arn) : one(module.public_resources[*].staging_arn)

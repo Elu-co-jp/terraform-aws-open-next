@@ -140,9 +140,9 @@ variable "aliases" {
 }
 
 variable "cache_control_immutable_assets_regex" {
-  description = "Regex to set public,max-age=31536000,immutable on immutable resources. This can be overridden for each zone"
+  description = "Regex matching content-hashed assets (default: everything under _next/static/, including under a basePath, e.g. docs/_next/static) to set their Cache-Control response header to public,max-age=31536000,immutable. This can be overridden for each zone"
   type        = string
-  default     = "^.*(\\.next)$"
+  default     = "^(?:.*/)?_next/static/.*$"
 }
 
 variable "content_types" {
