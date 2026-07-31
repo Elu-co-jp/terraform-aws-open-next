@@ -806,6 +806,10 @@ variable "waf" {
         arn    = optional(string)
         name   = optional(string)
       }))
+      uri_path_exclusions = optional(list(object({
+        path                  = string
+        positional_constraint = optional(string, "EXACTLY")
+      })), [])
     })))
     default_action = optional(object({
       action = optional(string, "ALLOW")
@@ -860,6 +864,26 @@ variable "waf" {
       ]
     ]))
     error_message = "All IP address restriction actions must be either BYPASS or BLOCK for each additional rule"
+  }
+
+  validation {
+    condition = var.waf.additional_rules == null ? true : alltrue(flatten([
+      for additional_rule in var.waf.additional_rules : [
+        for exclusion in additional_rule.uri_path_exclusions :
+        contains(["EXACTLY", "STARTS_WITH"], exclusion.positional_constraint) &&
+        startswith(exclusion.path, "/")
+      ]
+    ]))
+    error_message = "All URI path exclusions must start with / and use EXACTLY or STARTS_WITH"
+  }
+
+  validation {
+    condition = var.waf.additional_rules == null ? true : alltrue([
+      for additional_rule in var.waf.additional_rules :
+      length(additional_rule.uri_path_exclusions) == 0 ||
+      length(additional_rule.ip_address_restrictions) > 0
+    ])
+    error_message = "Additional rules with URI path exclusions must include at least one IP address restriction"
   }
 
   validation {

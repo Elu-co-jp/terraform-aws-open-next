@@ -292,8 +292,9 @@ locals {
           aggregate_key_type = "IP"
           geo_match_scope    = rule.geo_match_scope
         }
-        ip_set_reference_statements = null
-        byte_match_statement        = null
+        ip_set_reference_statements   = null
+        byte_match_statement          = null
+        uri_path_exclusion_statements = null
       }
     ],
     [
@@ -304,12 +305,13 @@ locals {
           name                       = aws_managed_rule.aws_managed_rule_name
           managed_rule_group_configs = null
         }
-        action                      = null
-        block_action                = null
-        logical_rule                = null
-        rate_based_statement        = null
-        ip_set_reference_statements = null
-        byte_match_statement        = null
+        action                        = null
+        block_action                  = null
+        logical_rule                  = null
+        rate_based_statement          = null
+        ip_set_reference_statements   = null
+        byte_match_statement          = null
+        uri_path_exclusion_statements = null
       }
     ],
     try(var.waf.sqli.enabled, false) ? [{
@@ -319,12 +321,13 @@ locals {
         name                       = "AWSManagedRulesSQLiRuleSet"
         managed_rule_group_configs = null
       }
-      action                      = null
-      block_action                = null
-      logical_rule                = null
-      rate_based_statement        = null
-      ip_set_reference_statements = null
-      byte_match_statement        = null
+      action                        = null
+      block_action                  = null
+      logical_rule                  = null
+      rate_based_statement          = null
+      ip_set_reference_statements   = null
+      byte_match_statement          = null
+      uri_path_exclusion_statements = null
     }] : [],
     try(var.waf.account_takeover_protection.enabled, false) ? [{
       name     = "account-takeover-protection"
@@ -336,12 +339,13 @@ locals {
           aws_managed_rules_acfp_rule_set = null
         }
       }
-      action                      = null
-      block_action                = null
-      logical_rule                = null
-      rate_based_statement        = null
-      ip_set_reference_statements = null
-      byte_match_statement        = null
+      action                        = null
+      block_action                  = null
+      logical_rule                  = null
+      rate_based_statement          = null
+      ip_set_reference_statements   = null
+      byte_match_statement          = null
+      uri_path_exclusion_statements = null
     }] : [],
     try(var.waf.account_creation_fraud_prevention.enabled, false) ? [{
       name     = "account-creation-fraud-prevention"
@@ -353,12 +357,13 @@ locals {
           aws_managed_rules_acfp_rule_set = var.waf.account_creation_fraud_prevention
         }
       }
-      action                      = null
-      block_action                = null
-      logical_rule                = null
-      rate_based_statement        = null
-      ip_set_reference_statements = null
-      byte_match_statement        = null
+      action                        = null
+      block_action                  = null
+      logical_rule                  = null
+      rate_based_statement          = null
+      ip_set_reference_statements   = null
+      byte_match_statement          = null
+      uri_path_exclusion_statements = null
     }] : [],
     try(var.waf.enforce_basic_auth.enabled, false) ? [{
       name     = "basic-auth"
@@ -391,17 +396,26 @@ locals {
           type     = "NONE"
         }
       }
+      uri_path_exclusion_statements = null
     }] : [],
     var.waf.additional_rules != null ? [for additional_rule in var.waf.additional_rules : {
       name         = additional_rule.name
       priority     = additional_rule.priority
       action       = additional_rule.action
       block_action = additional_rule.block_action
-      logical_rule = null
+      logical_rule = length(additional_rule.uri_path_exclusions) > 0 ? "AND" : null
       ip_set_reference_statements = try(length(additional_rule.ip_address_restrictions), 0) > 0 ? [for ip_address_restriction in additional_rule.ip_address_restrictions : {
         not = ip_address_restriction.action == "BYPASS"
         arn = coalesce(ip_address_restriction.arn, aws_wafv2_ip_set.ip_set[ip_address_restriction.name].arn)
       }] : []
+      uri_path_exclusion_statements = [for exclusion in additional_rule.uri_path_exclusions : {
+        positional_constraint = exclusion.positional_constraint
+        search_string         = exclusion.path
+        text_transformation = {
+          priority = 0
+          type     = "NONE"
+        }
+      }]
       managed_rule_group_statement = null
       rate_based_statement         = null
       byte_match_statement         = null
@@ -1486,10 +1500,24 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
           for_each = rule.value.logical_rule == "AND" ? [true] : []
           content {
             dynamic "statement" {
-              for_each = rule.value.logical_rule == null && try(length(rule.value.ip_set_reference_statements), 0) == 1 && try(rule.value.ip_set_reference_statements[0].not, null) == false ? rule.value.ip_set_reference_statements : []
+              for_each = try(length(rule.value.ip_set_reference_statements), 0) == 1 ? rule.value.ip_set_reference_statements : []
               content {
-                ip_set_reference_statement {
-                  arn = statement.value.arn
+                dynamic "ip_set_reference_statement" {
+                  for_each = statement.value.not == false ? [statement.value] : []
+                  content {
+                    arn = ip_set_reference_statement.value.arn
+                  }
+                }
+
+                dynamic "not_statement" {
+                  for_each = statement.value.not == true ? [statement.value] : []
+                  content {
+                    statement {
+                      ip_set_reference_statement {
+                        arn = not_statement.value.arn
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1514,26 +1542,78 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
             }
 
             dynamic "statement" {
-              for_each = try(length(rule.value.ip_set_reference_statements), 0) > 2 ? [true] : []
+              for_each = try(length(rule.value.ip_set_reference_statements), 0) > 1 ? [rule.value.ip_set_reference_statements] : []
               content {
                 or_statement {
                   dynamic "statement" {
-                    for_each = [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == false]
+                    for_each = statement.value
                     content {
-                      ip_set_reference_statement {
-                        arn = statement.value.arn
+                      dynamic "ip_set_reference_statement" {
+                        for_each = statement.value.not == false ? [statement.value] : []
+                        content {
+                          arn = ip_set_reference_statement.value.arn
+                        }
+                      }
+
+                      dynamic "not_statement" {
+                        for_each = statement.value.not == true ? [statement.value] : []
+                        content {
+                          statement {
+                            ip_set_reference_statement {
+                              arn = not_statement.value.arn
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
+              }
+            }
 
-                dynamic "statement" {
-                  for_each = [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true]
-                  content {
-                    not_statement {
-                      statement {
-                        ip_set_reference_statement {
-                          arn = statement.value.arn
+            # Exclude public callback paths from this rule without bypassing other WAF rules.
+            dynamic "statement" {
+              for_each = try(length(rule.value.uri_path_exclusion_statements), 0) > 0 ? [rule.value.uri_path_exclusion_statements] : []
+              content {
+                not_statement {
+                  statement {
+                    dynamic "byte_match_statement" {
+                      for_each = length(statement.value) == 1 ? statement.value : []
+                      content {
+                        positional_constraint = byte_match_statement.value.positional_constraint
+                        search_string         = byte_match_statement.value.search_string
+
+                        field_to_match {
+                          uri_path {}
+                        }
+
+                        text_transformation {
+                          priority = byte_match_statement.value.text_transformation.priority
+                          type     = byte_match_statement.value.text_transformation.type
+                        }
+                      }
+                    }
+
+                    dynamic "or_statement" {
+                      for_each = length(statement.value) > 1 ? [statement.value] : []
+                      content {
+                        dynamic "statement" {
+                          for_each = or_statement.value
+                          content {
+                            byte_match_statement {
+                              positional_constraint = statement.value.positional_constraint
+                              search_string         = statement.value.search_string
+
+                              field_to_match {
+                                uri_path {}
+                              }
+
+                              text_transformation {
+                                priority = statement.value.text_transformation.priority
+                                type     = statement.value.text_transformation.type
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -1568,7 +1648,7 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
         }
 
         dynamic "or_statement" {
-          for_each = try(length(rule.value.ip_set_reference_statements), 0) > 1 ? [true] : []
+          for_each = rule.value.logical_rule == null && try(length(rule.value.ip_set_reference_statements), 0) > 1 ? [true] : []
           content {
             dynamic "statement" {
               for_each = [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == false]

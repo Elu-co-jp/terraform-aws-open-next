@@ -1381,6 +1381,10 @@ EOF
         arn    = optional(string)
         name   = optional(string)
       }))
+      uri_path_exclusions = optional(list(object({
+        path                  = string
+        positional_constraint = optional(string, "EXACTLY")
+      })), [])
     })))
     default_action = optional(object({
       action = optional(string, "ALLOW")
