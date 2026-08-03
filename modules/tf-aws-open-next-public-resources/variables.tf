@@ -704,10 +704,15 @@ variable "behaviours" {
 }
 
 variable "waf" {
-  description = "Configuration for the CloudFront distribution WAF. Each AWS managed rule group accepts COUNT or NONE as its override_action. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
+  description = "Configuration for the CloudFront distribution WAF. Setting logging creates a dedicated S3 bucket and enables full Web ACL logging. Each AWS managed rule group accepts COUNT or NONE as its override_action. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
+    logging = optional(object({
+      force_destroy    = optional(bool, false)
+      retention_days   = optional(number, 90)
+      redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+    }))
     aws_managed_rules = optional(list(object({
       priority              = optional(number)
       name                  = string
@@ -847,6 +852,20 @@ variable "waf" {
   validation {
     condition     = anytrue([contains(["NONE", "CREATE", "DETACH"], var.waf.deployment), (var.waf.deployment == "USE_EXISTING" && var.waf.web_acl_id != null)])
     error_message = "The Web ACL ID must be set when the deployment is set to USE_EXISTING"
+  }
+
+  validation {
+    condition = var.waf.logging == null ? true : (
+      contains(["CREATE", "USE_EXISTING"], var.waf.deployment) &&
+      var.waf.logging.retention_days >= 1 &&
+      floor(var.waf.logging.retention_days) == var.waf.logging.retention_days &&
+      length(distinct([for header in var.waf.logging.redacted_headers : lower(trimspace(header))])) <= 100 &&
+      alltrue([
+        for header in var.waf.logging.redacted_headers :
+        can(regex("^[0-9A-Za-z-]+$", header))
+      ])
+    )
+    error_message = "WAF logging requires CREATE or USE_EXISTING, retention_days as a positive integer, and at most 100 valid HTTP header names to redact"
   }
 
   validation {

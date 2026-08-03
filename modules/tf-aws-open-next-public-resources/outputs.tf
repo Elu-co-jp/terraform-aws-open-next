@@ -58,6 +58,18 @@ output "waf" {
   value       = try(one(aws_wafv2_web_acl.distribution_waf[*]), null)
 }
 
+output "waf_logging" {
+  description = "The WAF full logging configuration and dedicated S3 destination"
+  value = local.waf_logging_enabled ? {
+    bucket_name    = one(aws_s3_bucket.waf_logs[*].bucket)
+    bucket_arn     = one(aws_s3_bucket.waf_logs[*].arn)
+    retention_days = var.waf.logging.retention_days
+    redacted_headers = sort(distinct([
+      for header in try(var.waf.logging.redacted_headers, []) : lower(trimspace(header))
+    ]))
+  } : null
+}
+
 output "cache_policy_id" {
   description = "The default cache policy ID to associate with the distribution"
   value       = local.cache_policy_id

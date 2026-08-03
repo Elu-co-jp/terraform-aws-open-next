@@ -1248,6 +1248,8 @@ variable "waf" {
   description = <<EOF
 Configuration for the CloudFront distribution WAF.
 
+Set logging to create a dedicated S3 bucket and enable full Web ACL logging. retention_days controls object expiration and defaults to 90 days, and redacted_headers configures selected fields for redaction.
+
 Possible values for the WAF deployment are:
 - NONE 
 - USE_EXISTING
@@ -1285,6 +1287,11 @@ EOF
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
+    logging = optional(object({
+      force_destroy    = optional(bool, false)
+      retention_days   = optional(number, 90)
+      redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+    }))
     aws_managed_rules = optional(list(object({
       priority              = optional(number)
       name                  = string

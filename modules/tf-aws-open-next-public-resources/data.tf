@@ -1,5 +1,9 @@
 data "aws_region" "current" {}
 
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
 # Route 53
 
 data "aws_route53_zone" "hosted_zone" {

@@ -37,3 +37,14 @@ output "response_headers_policy_id" {
   description = "The ID of the response header policy"
   value       = one(module.public_resources[*].response_headers_policy_id)
 }
+
+output "waf_logging" {
+  description = "The WAF full logging configuration and dedicated S3 destinations"
+  value = {
+    shared = local.use_shared_distribution ? one(module.public_resources[*].waf_logging) : null
+    zones = {
+      for zone in local.zones : zone.name => module.website_zone[zone.name].waf_logging
+      if !local.use_shared_distribution
+    }
+  }
+}
