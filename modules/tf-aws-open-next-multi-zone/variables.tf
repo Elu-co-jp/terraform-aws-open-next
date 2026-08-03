@@ -1246,6 +1246,8 @@ Possible values for the WAF default action are:
 - ALLOW
 - BLOCK
 
+Each AWS managed rule group accepts COUNT or NONE as its override_action.
+
 The module provides the ability to configure recommended WAF rules to guard against SQL Injection (sqli), account takeover protection and account creation fraud prevention.
 
 Multiple rate limits can be configured with each limit applied across all geographic regions or limited to a specific region. The possible values for the action are:
@@ -1271,6 +1273,7 @@ EOF
       priority              = optional(number)
       name                  = string
       aws_managed_rule_name = string
+      override_action       = optional(string, "NONE")
       })), [{
       name                  = "amazon-ip-reputation-list"
       aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -1292,12 +1295,14 @@ EOF
       })), [])
     }), {})
     sqli = optional(object({
-      enabled  = optional(bool, false)
-      priority = optional(number)
+      enabled         = optional(bool, false)
+      priority        = optional(number)
+      override_action = optional(string, "NONE")
     }), {})
     account_takeover_protection = optional(object({
       enabled              = optional(bool, false)
       priority             = optional(number)
+      override_action      = optional(string, "NONE")
       login_path           = string
       enable_regex_in_path = optional(bool)
       request_inspection = optional(object({
@@ -1313,6 +1318,7 @@ EOF
     account_creation_fraud_prevention = optional(object({
       enabled                = optional(bool, false)
       priority               = optional(number)
+      override_action        = optional(string, "NONE")
       creation_path          = string
       registration_page_path = string
       enable_regex_in_path   = optional(bool)
@@ -2316,6 +2322,7 @@ variable "zones" {
         priority              = optional(number)
         name                  = string
         aws_managed_rule_name = string
+        override_action       = optional(string, "NONE")
         })), [{
         name                  = "amazon-ip-reputation-list"
         aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -2337,12 +2344,14 @@ variable "zones" {
         })), [])
       }), {})
       sqli = optional(object({
-        enabled  = optional(bool, false)
-        priority = optional(number)
+        enabled         = optional(bool, false)
+        priority        = optional(number)
+        override_action = optional(string, "NONE")
       }), {})
       account_takeover_protection = optional(object({
         enabled              = optional(bool, false)
         priority             = optional(number)
+        override_action      = optional(string, "NONE")
         login_path           = string
         enable_regex_in_path = optional(bool)
         request_inspection = optional(object({
@@ -2358,6 +2367,7 @@ variable "zones" {
       account_creation_fraud_prevention = optional(object({
         enabled                = optional(bool, false)
         priority               = optional(number)
+        override_action        = optional(string, "NONE")
         creation_path          = string
         registration_page_path = string
         enable_regex_in_path   = optional(bool)

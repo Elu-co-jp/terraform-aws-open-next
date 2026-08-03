@@ -704,7 +704,7 @@ variable "behaviours" {
 }
 
 variable "waf" {
-  description = "Configuration for the CloudFront distribution WAF. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
+  description = "Configuration for the CloudFront distribution WAF. Each AWS managed rule group accepts COUNT or NONE as its override_action. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
@@ -712,6 +712,7 @@ variable "waf" {
       priority              = optional(number)
       name                  = string
       aws_managed_rule_name = string
+      override_action       = optional(string, "NONE")
       })), [{
       name                  = "amazon-ip-reputation-list"
       aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -733,12 +734,14 @@ variable "waf" {
       })), [])
     }), {})
     sqli = optional(object({
-      enabled  = optional(bool, false)
-      priority = optional(number)
+      enabled         = optional(bool, false)
+      priority        = optional(number)
+      override_action = optional(string, "NONE")
     }), {})
     account_takeover_protection = optional(object({
       enabled              = optional(bool, false)
       priority             = optional(number)
+      override_action      = optional(string, "NONE")
       login_path           = string
       enable_regex_in_path = optional(bool)
       request_inspection = optional(object({
@@ -754,6 +757,7 @@ variable "waf" {
     account_creation_fraud_prevention = optional(object({
       enabled                = optional(bool, false)
       priority               = optional(number)
+      override_action        = optional(string, "NONE")
       creation_path          = string
       registration_page_path = string
       enable_regex_in_path   = optional(bool)
@@ -848,6 +852,16 @@ variable "waf" {
   validation {
     condition     = var.waf.default_action == null ? true : contains(["ALLOW", "BLOCK"], var.waf.default_action.action)
     error_message = "The WAF default action can be one of ALLOW or BLOCK"
+  }
+
+  validation {
+    condition = (
+      alltrue([for rule in var.waf.aws_managed_rules : contains(["COUNT", "NONE"], rule.override_action)]) &&
+      contains(["COUNT", "NONE"], var.waf.sqli.override_action) &&
+      try(contains(["COUNT", "NONE"], var.waf.account_takeover_protection.override_action), true) &&
+      try(contains(["COUNT", "NONE"], var.waf.account_creation_fraud_prevention.override_action), true)
+    )
+    error_message = "Each AWS managed rule group override action must be either COUNT or NONE"
   }
 
   validation {

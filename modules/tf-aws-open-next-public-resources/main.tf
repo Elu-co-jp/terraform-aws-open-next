@@ -295,6 +295,7 @@ locals {
         ip_set_reference_statements   = null
         byte_match_statement          = null
         uri_path_exclusion_statements = null
+        override_action               = null
       }
     ],
     [
@@ -312,6 +313,7 @@ locals {
         ip_set_reference_statements   = null
         byte_match_statement          = null
         uri_path_exclusion_statements = null
+        override_action               = aws_managed_rule.override_action
       }
     ],
     try(var.waf.sqli.enabled, false) ? [{
@@ -328,6 +330,7 @@ locals {
       ip_set_reference_statements   = null
       byte_match_statement          = null
       uri_path_exclusion_statements = null
+      override_action               = var.waf.sqli.override_action
     }] : [],
     try(var.waf.account_takeover_protection.enabled, false) ? [{
       name     = "account-takeover-protection"
@@ -346,6 +349,7 @@ locals {
       ip_set_reference_statements   = null
       byte_match_statement          = null
       uri_path_exclusion_statements = null
+      override_action               = var.waf.account_takeover_protection.override_action
     }] : [],
     try(var.waf.account_creation_fraud_prevention.enabled, false) ? [{
       name     = "account-creation-fraud-prevention"
@@ -364,6 +368,7 @@ locals {
       ip_set_reference_statements   = null
       byte_match_statement          = null
       uri_path_exclusion_statements = null
+      override_action               = var.waf.account_creation_fraud_prevention.override_action
     }] : [],
     try(var.waf.enforce_basic_auth.enabled, false) ? [{
       name     = "basic-auth"
@@ -397,6 +402,7 @@ locals {
         }
       }
       uri_path_exclusion_statements = null
+      override_action               = null
     }] : [],
     var.waf.additional_rules != null ? [for additional_rule in var.waf.additional_rules : {
       name         = additional_rule.name
@@ -419,6 +425,7 @@ locals {
       managed_rule_group_statement = null
       rate_based_statement         = null
       byte_match_statement         = null
+      override_action              = null
     } if additional_rule.enabled] : []
   )
 
@@ -1340,7 +1347,15 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
       dynamic "override_action" {
         for_each = rule.value.logical_rule == null && rule.value.managed_rule_group_statement != null ? [true] : []
         content {
-          none {}
+          dynamic "count" {
+            for_each = rule.value.override_action == "COUNT" ? [true] : []
+            content {}
+          }
+
+          dynamic "none" {
+            for_each = rule.value.override_action == "NONE" ? [true] : []
+            content {}
+          }
         }
       }
 
