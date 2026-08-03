@@ -1466,13 +1466,37 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
         }
 
         dynamic "not_statement" {
-          for_each = rule.value.logical_rule == null && ((try(length(rule.value.ip_set_reference_statements), 0) == 1 && try(rule.value.ip_set_reference_statements[0].not, null) == true) || try(rule.value.byte_match_statement.not, false)) ? [true] : []
+          for_each = rule.value.logical_rule == null && (
+            (
+              try(length(rule.value.ip_set_reference_statements), 0) > 0 &&
+              try(alltrue([for statement in rule.value.ip_set_reference_statements : statement.not]), false)
+            ) ||
+            try(rule.value.byte_match_statement.not, false)
+          ) ? [true] : []
           content {
             statement {
               dynamic "ip_set_reference_statement" {
                 for_each = try(length(rule.value.ip_set_reference_statements), 0) == 1 ? rule.value.ip_set_reference_statements : []
                 content {
                   arn = ip_set_reference_statement.value.arn
+                }
+              }
+
+              # Multiple BYPASS IP sets form one allowlist union: NOT (set-a OR set-b).
+              dynamic "or_statement" {
+                for_each = (
+                  try(length(rule.value.ip_set_reference_statements), 0) > 1 &&
+                  try(alltrue([for statement in rule.value.ip_set_reference_statements : statement.not]), false)
+                ) ? [rule.value.ip_set_reference_statements] : []
+                content {
+                  dynamic "statement" {
+                    for_each = or_statement.value
+                    content {
+                      ip_set_reference_statement {
+                        arn = statement.value.arn
+                      }
+                    }
+                  }
                 }
               }
 
@@ -1541,26 +1565,73 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
               }
             }
 
+            # Multiple BYPASS IP sets form one allowlist union before negation.
             dynamic "statement" {
-              for_each = try(length(rule.value.ip_set_reference_statements), 0) > 1 ? [rule.value.ip_set_reference_statements] : []
+              for_each = (
+                try(length(rule.value.ip_set_reference_statements), 0) > 1 &&
+                try(alltrue([for ip_set_statement in rule.value.ip_set_reference_statements : ip_set_statement.not]), false)
+              ) ? [rule.value.ip_set_reference_statements] : []
+              content {
+                not_statement {
+                  statement {
+                    or_statement {
+                      dynamic "statement" {
+                        for_each = statement.value
+                        content {
+                          ip_set_reference_statement {
+                            arn = statement.value.arn
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            # Preserve BLOCK/BYPASS mixed semantics while grouping all BYPASS sets.
+            dynamic "statement" {
+              for_each = (
+                try(length(rule.value.ip_set_reference_statements), 0) > 1 &&
+                try(length([for ip_set_statement in rule.value.ip_set_reference_statements : ip_set_statement if ip_set_statement.not == false]), 0) > 0
+              ) ? [rule.value.ip_set_reference_statements] : []
               content {
                 or_statement {
                   dynamic "statement" {
-                    for_each = statement.value
+                    for_each = [for ip_set_statement in statement.value : ip_set_statement if ip_set_statement.not == false]
                     content {
-                      dynamic "ip_set_reference_statement" {
-                        for_each = statement.value.not == false ? [statement.value] : []
-                        content {
-                          arn = ip_set_reference_statement.value.arn
+                      ip_set_reference_statement {
+                        arn = statement.value.arn
+                      }
+                    }
+                  }
+
+                  dynamic "statement" {
+                    for_each = length([for ip_set_statement in statement.value : ip_set_statement if ip_set_statement.not == true]) == 1 ? [for ip_set_statement in statement.value : ip_set_statement if ip_set_statement.not == true] : []
+                    content {
+                      not_statement {
+                        statement {
+                          ip_set_reference_statement {
+                            arn = statement.value.arn
+                          }
                         }
                       }
+                    }
+                  }
 
-                      dynamic "not_statement" {
-                        for_each = statement.value.not == true ? [statement.value] : []
-                        content {
-                          statement {
-                            ip_set_reference_statement {
-                              arn = not_statement.value.arn
+                  dynamic "statement" {
+                    for_each = length([for ip_set_statement in statement.value : ip_set_statement if ip_set_statement.not == true]) > 1 ? [[for ip_set_statement in statement.value : ip_set_statement if ip_set_statement.not == true]] : []
+                    content {
+                      not_statement {
+                        statement {
+                          or_statement {
+                            dynamic "statement" {
+                              for_each = statement.value
+                              content {
+                                ip_set_reference_statement {
+                                  arn = statement.value.arn
+                                }
+                              }
                             }
                           }
                         }
@@ -1648,7 +1719,11 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
         }
 
         dynamic "or_statement" {
-          for_each = rule.value.logical_rule == null && try(length(rule.value.ip_set_reference_statements), 0) > 1 ? [true] : []
+          for_each = (
+            rule.value.logical_rule == null &&
+            try(length(rule.value.ip_set_reference_statements), 0) > 1 &&
+            try(length([for statement in rule.value.ip_set_reference_statements : statement if statement.not == false]), 0) > 0
+          ) ? [true] : []
           content {
             dynamic "statement" {
               for_each = [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == false]
@@ -1660,12 +1735,32 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
             }
 
             dynamic "statement" {
-              for_each = [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true]
+              for_each = length([for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true]) == 1 ? [for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true] : []
               content {
                 not_statement {
                   statement {
                     ip_set_reference_statement {
                       arn = statement.value.arn
+                    }
+                  }
+                }
+              }
+            }
+
+            dynamic "statement" {
+              for_each = length([for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true]) > 1 ? [[for ip_set_reference_statement in rule.value.ip_set_reference_statements : ip_set_reference_statement if ip_set_reference_statement.not == true]] : []
+              content {
+                not_statement {
+                  statement {
+                    or_statement {
+                      dynamic "statement" {
+                        for_each = statement.value
+                        content {
+                          ip_set_reference_statement {
+                            arn = statement.value.arn
+                          }
+                        }
+                      }
                     }
                   }
                 }
