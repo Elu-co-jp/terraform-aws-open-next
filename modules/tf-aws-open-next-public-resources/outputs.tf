@@ -46,11 +46,13 @@ output "aliases" {
 output "distribution" {
   description = "The configuration of the cloudfront distribution. These are added to aid with testing"
   value       = var.continuous_deployment.use ? one(aws_cloudfront_distribution.production_distribution[*]) : one(aws_cloudfront_distribution.website_distribution[*])
+  sensitive   = true
 }
 
 output "staging_distribution" {
   description = "The configuration of the cloudfront distribution. These are added to aid with testing"
   value       = try(one(aws_cloudfront_distribution.staging_distribution[*]), null)
+  sensitive   = true
 }
 
 output "waf" {
@@ -61,12 +63,10 @@ output "waf" {
 output "waf_logging" {
   description = "The WAF full logging configuration and dedicated S3 destination"
   value = local.waf_logging_enabled ? {
-    bucket_name    = one(aws_s3_bucket.waf_logs[*].bucket)
-    bucket_arn     = one(aws_s3_bucket.waf_logs[*].arn)
-    retention_days = var.waf.logging.retention_days
-    redacted_headers = sort(distinct([
-      for header in try(var.waf.logging.redacted_headers, []) : lower(trimspace(header))
-    ]))
+    bucket_name      = one(module.waf_logging[*].bucket_name)
+    bucket_arn       = one(module.waf_logging[*].bucket_arn)
+    retention_days   = one(module.waf_logging[*].retention_days)
+    redacted_headers = one(module.waf_logging[*].redacted_headers)
   } : null
 }
 

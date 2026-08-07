@@ -263,6 +263,13 @@ variable "zones" {
   }
 }
 
+variable "sensitive_origin_headers" {
+  description = "Sensitive CloudFront custom origin header values keyed by origin ID and then header name. Header names must also exist in zones[*].origins[*].headers."
+  type        = map(map(string))
+  default     = {}
+  sensitive   = true
+}
+
 variable "behaviours" {
   description = "Override the default behaviour config"
   type = object({
@@ -855,17 +862,8 @@ variable "waf" {
   }
 
   validation {
-    condition = var.waf.logging == null ? true : (
-      contains(["CREATE", "USE_EXISTING"], var.waf.deployment) &&
-      var.waf.logging.retention_days >= 1 &&
-      floor(var.waf.logging.retention_days) == var.waf.logging.retention_days &&
-      length(distinct([for header in var.waf.logging.redacted_headers : lower(trimspace(header))])) <= 100 &&
-      alltrue([
-        for header in var.waf.logging.redacted_headers :
-        can(regex("^[0-9A-Za-z-]+$", header))
-      ])
-    )
-    error_message = "WAF logging requires CREATE or USE_EXISTING, retention_days as a positive integer, and at most 100 valid HTTP header names to redact"
+    condition     = var.waf.logging == null ? true : contains(["CREATE", "USE_EXISTING"], var.waf.deployment)
+    error_message = "WAF logging requires the WAF deployment to be CREATE or USE_EXISTING"
   }
 
   validation {

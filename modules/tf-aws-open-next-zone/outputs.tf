@@ -57,3 +57,17 @@ output "waf_logging" {
   description = "The WAF full logging configuration and dedicated S3 destination"
   value       = local.create_distribution ? one(module.public_resources[*].waf_logging) : null
 }
+
+output "api_gateway" {
+  description = "Regional REST API Gateway origin configuration"
+  value = local.api_gateway_enabled ? {
+    rest_api_id                  = one(module.api_gateway[*].rest_api_id)
+    execution_arn                = one(module.api_gateway[*].execution_arn)
+    stage_name                   = one(module.api_gateway[*].stage_name)
+    origin_domain_name           = one(module.api_gateway[*].origin_domain_name)
+    origin_path                  = one(module.api_gateway[*].origin_path)
+    web_acl_arn                  = one(module.api_gateway[*].web_acl_arn)
+    cloudfront_origin_ipv4_cidrs = one(module.api_gateway[*].cloudfront_origin_ipv4_cidrs)
+    waf_logging                  = one(module.api_gateway[*].waf_logging)
+  } : null
+}

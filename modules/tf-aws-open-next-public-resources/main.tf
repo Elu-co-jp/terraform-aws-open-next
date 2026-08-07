@@ -276,7 +276,16 @@ locals {
     ])
   )
 
-  web_acl_id           = contains(["DETACH", "NONE"], var.waf.deployment) ? null : var.waf.deployment == "USE_EXISTING" ? var.waf.web_acl_id : one(aws_wafv2_web_acl.distribution_waf[*].arn)
+  web_acl_id          = contains(["DETACH", "NONE"], var.waf.deployment) ? null : var.waf.deployment == "USE_EXISTING" ? var.waf.web_acl_id : one(aws_wafv2_web_acl.distribution_waf[*].arn)
+  waf_logging_enabled = var.waf.logging != null
+  waf_log_bucket_name_seed = trim(
+    replace(lower(join("-", compact([
+      var.prefix != null ? var.prefix : "",
+      var.suffix != null ? var.suffix : "",
+      "cloudfront",
+    ]))), "/[^a-z0-9-]/", "-"),
+    "-",
+  )
   waf_rate_limit_rules = try(var.waf.rate_limiting.enabled, false) == true ? var.waf.rate_limiting.limits : []
   rules = concat(
     [
@@ -705,7 +714,7 @@ resource "aws_cloudfront_distribution" "website_distribution" {
 
         content {
           name  = custom_header.key
-          value = custom_header.value
+          value = try(var.sensitive_origin_headers[origin.value.origin_id][custom_header.key], custom_header.value)
         }
       }
 
@@ -858,7 +867,7 @@ resource "aws_cloudfront_distribution" "production_distribution" {
 
         content {
           name  = custom_header.key
-          value = custom_header.value
+          value = try(var.sensitive_origin_headers[origin.value.origin_id][custom_header.key], custom_header.value)
         }
       }
 
@@ -1016,7 +1025,7 @@ resource "aws_cloudfront_distribution" "staging_distribution" {
 
         content {
           name  = custom_header.key
-          value = custom_header.value
+          value = try(var.sensitive_origin_headers[origin.value.origin_id][custom_header.key], custom_header.value)
         }
       }
 
@@ -1788,7 +1797,7 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
       visibility_config {
         cloudwatch_metrics_enabled = true
         metric_name                = "${local.prefix}${rule.value.name}${local.suffix}"
-        sampled_requests_enabled   = true
+        sampled_requests_enabled   = false
       }
     }
   }
@@ -1796,7 +1805,7 @@ resource "aws_wafv2_web_acl" "distribution_waf" {
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${local.prefix}website-waf-metric${local.suffix}"
-    sampled_requests_enabled   = true
+    sampled_requests_enabled   = false
   }
 
   depends_on = [aws_wafv2_ip_set.ip_set]
@@ -1810,6 +1819,17 @@ resource "aws_wafv2_ip_set" "ip_set" {
   scope              = "CLOUDFRONT"
   ip_address_version = each.value.ip_address_version
   addresses          = each.value.addresses
+}
+
+module "waf_logging" {
+  count  = local.waf_logging_enabled ? 1 : 0
+  source = "../tf-aws-waf-logging"
+
+  bucket_name_seed = local.waf_log_bucket_name_seed
+  web_acl_arn      = local.web_acl_id
+  force_destroy    = try(var.waf.logging.force_destroy, false)
+  retention_days   = var.waf.logging.retention_days
+  redacted_headers = try(var.waf.logging.redacted_headers, [])
 }
 
 # Route 53

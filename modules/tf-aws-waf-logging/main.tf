@@ -1,19 +1,18 @@
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+
 locals {
-  waf_logging_enabled = var.waf.logging != null
-  waf_log_bucket_name_seed = trim(
-    replace(lower(join("-", compact([
-      var.prefix != null ? var.prefix : "",
-      var.suffix != null ? var.suffix : "",
-      "cloudfront",
-    ]))), "/[^a-z0-9-]/", "-"),
-    "-",
-  )
-  waf_log_bucket_name = format(
+  normalized_bucket_name_seed = trim(replace(lower(var.bucket_name_seed), "/[^a-z0-9-]/", "-"), "-")
+  bucket_name = format(
     "aws-waf-logs-%s-%s-%s",
-    substr(local.waf_log_bucket_name_seed, 0, min(length(local.waf_log_bucket_name_seed), 24)),
-    substr(sha1(local.waf_log_bucket_name_seed), 0, 6),
+    substr(local.normalized_bucket_name_seed, 0, min(length(local.normalized_bucket_name_seed), 24)),
+    substr(sha1(local.normalized_bucket_name_seed), 0, 6),
     data.aws_caller_identity.current.account_id,
   )
+  normalized_redacted_headers = sort(distinct([
+    for header in var.redacted_headers : lower(trimspace(header))
+  ]))
 }
 
 resource "aws_s3_bucket" "waf_logs" {
@@ -22,16 +21,13 @@ resource "aws_s3_bucket" "waf_logs" {
   # checkov:skip=CKV_AWS_145: SSE-S3 avoids requiring every consumer to manage a customer-managed KMS key
   # checkov:skip=CKV_AWS_21: WAF logs are append-only and do not require object versioning
   # checkov:skip=CKV2_AWS_62: Event notifications depend on the consumer's log processing requirements
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket        = local.waf_log_bucket_name
-  force_destroy = try(var.waf.logging.force_destroy, false)
+  bucket        = local.bucket_name
+  force_destroy = var.force_destroy
+  tags          = var.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.waf_logs[0].id
+  bucket = aws_s3_bucket.waf_logs.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -40,9 +36,7 @@ resource "aws_s3_bucket_public_access_block" "waf_logs" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.waf_logs[0].id
+  bucket = aws_s3_bucket.waf_logs.id
 
   rule {
     object_ownership = "BucketOwnerEnforced"
@@ -50,9 +44,7 @@ resource "aws_s3_bucket_ownership_controls" "waf_logs" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.waf_logs[0].id
+  bucket = aws_s3_bucket.waf_logs.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -62,9 +54,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "waf_logs" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.waf_logs[0].id
+  bucket = aws_s3_bucket.waf_logs.id
 
   rule {
     id     = "waf"
@@ -75,7 +65,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "waf_logs" {
     }
 
     expiration {
-      days = var.waf.logging.retention_days
+      days = var.retention_days
     }
 
     abort_incomplete_multipart_upload {
@@ -85,16 +75,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "waf_logs" {
 }
 
 data "aws_iam_policy_document" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
   statement {
     sid = "DenyInsecureTransport"
 
     actions = ["s3:*"]
     effect  = "Deny"
     resources = [
-      aws_s3_bucket.waf_logs[0].arn,
-      "${aws_s3_bucket.waf_logs[0].arn}/*",
+      aws_s3_bucket.waf_logs.arn,
+      "${aws_s3_bucket.waf_logs.arn}/*",
     ]
 
     principals {
@@ -110,13 +98,12 @@ data "aws_iam_policy_document" "waf_logs" {
   }
 
   statement {
-    # Match the Sid that AWS WAF uses when it automatically maintains this statement.
     sid = "AWSLogDeliveryWrite"
 
     actions = ["s3:PutObject"]
     effect  = "Allow"
     resources = [
-      "${aws_s3_bucket.waf_logs[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
+      "${aws_s3_bucket.waf_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
     ]
 
     principals {
@@ -137,15 +124,13 @@ data "aws_iam_policy_document" "waf_logs" {
     }
 
     condition {
-      test = "ArnLike"
-      # CloudFront-scope WAF resources and their log delivery configuration use us-east-1.
-      values   = ["arn:${data.aws_partition.current.partition}:logs:us-east-1:${data.aws_caller_identity.current.account_id}:*"]
+      test     = "ArnLike"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"]
       variable = "aws:SourceArn"
     }
   }
 
   statement {
-    # Match the Sid that AWS WAF uses when it automatically maintains this statement.
     sid = "AWSLogDeliveryAclCheck"
 
     actions = [
@@ -153,7 +138,7 @@ data "aws_iam_policy_document" "waf_logs" {
       "s3:ListBucket",
     ]
     effect    = "Allow"
-    resources = [aws_s3_bucket.waf_logs[0].arn]
+    resources = [aws_s3_bucket.waf_logs.arn]
 
     principals {
       identifiers = ["delivery.logs.amazonaws.com"]
@@ -167,31 +152,24 @@ data "aws_iam_policy_document" "waf_logs" {
     }
 
     condition {
-      test = "ArnLike"
-      # CloudFront-scope WAF resources and their log delivery configuration use us-east-1.
-      values   = ["arn:${data.aws_partition.current.partition}:logs:us-east-1:${data.aws_caller_identity.current.account_id}:*"]
+      test     = "ArnLike"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"]
       variable = "aws:SourceArn"
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "waf_logs" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.waf_logs[0].id
-  policy = data.aws_iam_policy_document.waf_logs[0].json
+  bucket = aws_s3_bucket.waf_logs.id
+  policy = data.aws_iam_policy_document.waf_logs.json
 }
 
-resource "aws_wafv2_web_acl_logging_configuration" "distribution_waf" {
-  count = local.waf_logging_enabled ? 1 : 0
-
-  log_destination_configs = [aws_s3_bucket.waf_logs[0].arn]
-  resource_arn            = local.web_acl_id
+resource "aws_wafv2_web_acl_logging_configuration" "this" {
+  log_destination_configs = [aws_s3_bucket.waf_logs.arn]
+  resource_arn            = var.web_acl_arn
 
   dynamic "redacted_fields" {
-    for_each = toset([
-      for header in try(var.waf.logging.redacted_headers, []) : lower(trimspace(header))
-    ])
+    for_each = toset(local.normalized_redacted_headers)
 
     content {
       single_header {

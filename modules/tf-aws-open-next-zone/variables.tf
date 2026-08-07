@@ -720,6 +720,41 @@ EOF
   default = {}
 }
 
+variable "api_gateway" {
+  description = "Regional REST API Gateway configuration for the default OpenNext Server Lambda. When enabled, CloudFront uses API Gateway instead of the public Server Lambda Function URL."
+  type = object({
+    enabled                          = optional(bool, false)
+    stage_name                       = optional(string, "stable")
+    integration_timeout_milliseconds = optional(number, 29000)
+    origin_response_timeout          = optional(number, 30)
+    cloudwatch_log_retention_days    = optional(number, 90)
+    binary_media_types               = optional(list(string), ["*/*"])
+    active_origin_verify_secret_key  = optional(string)
+    waf_logging = optional(object({
+      force_destroy  = optional(bool, false)
+      retention_days = optional(number, 90)
+    }), {})
+  })
+  default = {}
+
+  validation {
+    condition     = var.api_gateway.integration_timeout_milliseconds >= 50 && var.api_gateway.integration_timeout_milliseconds <= 300000
+    error_message = "api_gateway.integration_timeout_milliseconds must be between 50 and 300000. Values above the account quota require an approved API Gateway quota increase."
+  }
+
+  validation {
+    condition     = var.api_gateway.origin_response_timeout >= 1 && var.api_gateway.origin_response_timeout <= 300
+    error_message = "api_gateway.origin_response_timeout must be between 1 and 300 seconds."
+  }
+}
+
+variable "api_gateway_origin_verify_secrets" {
+  description = "Resolved X-Origin-Verify secret values keyed by stable logical name. Supply one normally, or two temporarily during rotation."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "tag_mapping_db" {
   description = <<EOF
 Configuration for the ISR tag mapping database

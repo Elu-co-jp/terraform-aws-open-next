@@ -43,12 +43,30 @@ locals {
   additional_server_functions = local.origins != null ? { for name, details in local.origins : name => details if contains(["s3", "imageOptimizer", "default"], name) == false } : {}
 
   create_distribution = var.distribution.deployment == "CREATE"
+  api_gateway_enabled = var.api_gateway.enabled
 
   staging_alias    = var.aliases != null ? var.aliases.staging : one(module.open_next_aliases[*].alias_details.staging)
   production_alias = var.aliases != null ? var.aliases.production : one(module.open_next_aliases[*].alias_details.production)
   aliases          = var.aliases != null ? distinct(values(var.aliases)) : one(module.open_next_aliases[*].alias_details.aliases)
 
-  edge_function_env_variables = { "OPEN_NEXT_ORIGIN" = jsonencode(merge({ for name, details in local.additional_server_functions : name => { "host" : lookup(module.additional_server_function[name].url_hostnames, local.staging_alias, null), "protocol" : "https", "port" : 443 } }, { "default" = { "host" : lookup(module.server_function.url_hostnames, local.staging_alias, null), "protocol" : "https", "port" : 443 } })) }
+  edge_function_env_variables = {
+    "OPEN_NEXT_ORIGIN" = jsonencode(merge(
+      {
+        for name in keys(local.additional_server_functions) : name => {
+          "host"     = lookup(module.additional_server_function[name].url_hostnames, local.staging_alias, null)
+          "protocol" = "https"
+          "port"     = 443
+        }
+      },
+      {
+        "default" = {
+          "host"     = local.api_gateway_enabled ? one(module.api_gateway[*].origin_domain_name) : lookup(module.server_function.url_hostnames, local.staging_alias, null)
+          "protocol" = "https"
+          "port"     = 443
+        }
+      }
+    ))
+  }
 
   prefix = var.prefix == null ? "" : "${var.prefix}-"
   suffix = var.suffix == null ? "" : "-${var.suffix}"
@@ -89,18 +107,31 @@ locals {
       connection_timeout  = var.image_optimisation_function.create ? try(coalesce(try(var.image_optimisation_function.origin_timeouts.connection_timeout, null), try(var.origin_timeouts.connection_timeout, null)), null) : null
     }
     },
-    local.server_at_edge ? {} : { server = {
-      domain_name         = lookup(module.server_function.url_hostnames, local.staging_alias, null)
-      backend_name        = module.server_function.name
-      arn                 = module.server_function.arn
-      path                = null
-      auth                = lookup(local.auth_options, var.server_function.backend_deployment_type, null)
-      headers             = null
-      keepalive_timeout   = try(coalesce(try(var.server_function.origin_timeouts.keepalive_timeout, null), try(var.origin_timeouts.keepalive_timeout, null)), null)
-      read_timeout        = try(coalesce(try(var.server_function.origin_timeouts.read_timeout, null), try(var.origin_timeouts.read_timeout, null)), null)
-      connection_attempts = try(coalesce(try(var.server_function.origin_timeouts.connection_attempts, null), try(var.origin_timeouts.connection_attempts, null)), null)
-      connection_timeout  = try(coalesce(try(var.server_function.origin_timeouts.connection_timeout, null), try(var.origin_timeouts.connection_timeout, null)), null)
-    } },
+    local.server_at_edge ? {} : {
+      server = merge({
+        keepalive_timeout   = try(coalesce(try(var.server_function.origin_timeouts.keepalive_timeout, null), try(var.origin_timeouts.keepalive_timeout, null)), null)
+        connection_attempts = try(coalesce(try(var.server_function.origin_timeouts.connection_attempts, null), try(var.origin_timeouts.connection_attempts, null)), null)
+        connection_timeout  = try(coalesce(try(var.server_function.origin_timeouts.connection_timeout, null), try(var.origin_timeouts.connection_timeout, null)), null)
+        },
+        local.api_gateway_enabled ? {
+          domain_name  = one(module.api_gateway[*].origin_domain_name)
+          path         = one(module.api_gateway[*].origin_path)
+          backend_name = null
+          arn          = null
+          auth         = null
+          headers      = { "X-Origin-Verify" = "" }
+          read_timeout = var.api_gateway.origin_response_timeout
+          } : {
+          domain_name  = lookup(module.server_function.url_hostnames, local.staging_alias, null)
+          path         = null
+          backend_name = module.server_function.name
+          arn          = module.server_function.arn
+          auth         = lookup(local.auth_options, var.server_function.backend_deployment_type, null)
+          headers      = null
+          read_timeout = try(coalesce(try(var.server_function.origin_timeouts.read_timeout, null), try(var.origin_timeouts.read_timeout, null)), null)
+        }
+      )
+    },
     { for name, additional_server_function in local.additional_server_functions : name => {
       domain_name         = lookup(module.additional_server_function[name].url_hostnames, local.staging_alias, null)
       backend_name        = module.additional_server_function[name].name
@@ -257,6 +288,11 @@ module "public_resources" {
   waf                   = var.waf
   domain_config         = var.domain_config
   continuous_deployment = var.continuous_deployment
+  sensitive_origin_headers = local.api_gateway_enabled ? {
+    "website-server-function-origin" = {
+      "X-Origin-Verify" = var.api_gateway_origin_verify_secrets[var.api_gateway.active_origin_verify_secret_key]
+    }
+  } : {}
 
   custom_error_responses = local.custom_error_responses
 
@@ -461,7 +497,7 @@ module "server_function" {
   run_at_edge = local.server_at_edge
 
   function_url = {
-    create              = local.server_at_edge == false
+    create              = local.server_at_edge == false && local.api_gateway_enabled == false
     authorization_type  = try(contains(["OAC", "AUTH_LAMBDA"], lookup(local.auth_options, var.server_function.backend_deployment_type, null)), false) ? "AWS_IAM" : "NONE"
     allow_any_principal = var.server_function.backend_deployment_type != "REGIONAL_LAMBDA_WITH_OAC"
     enable_streaming    = coalesce(var.server_function.enable_streaming, lookup(local.default_server_function, "streaming", false))
@@ -474,6 +510,68 @@ module "server_function" {
     aws     = aws.server_function
     aws.iam = aws.iam
   }
+}
+
+resource "terraform_data" "api_gateway_configuration" {
+  input = local.api_gateway_enabled
+
+  lifecycle {
+    precondition {
+      condition     = local.api_gateway_enabled == false || local.server_at_edge == false
+      error_message = "api_gateway cannot be enabled when the default server uses EDGE_LAMBDA."
+    }
+
+    precondition {
+      condition     = local.api_gateway_enabled == false || length(local.edge_functions) == 0
+      error_message = "api_gateway currently cannot be combined with OpenNext edge functions because OPEN_NEXT_ORIGIN does not carry the REST API stage path."
+    }
+
+    precondition {
+      condition     = local.api_gateway_enabled == false || contains(nonsensitive(keys(var.api_gateway_origin_verify_secrets)), coalesce(var.api_gateway.active_origin_verify_secret_key, ""))
+      error_message = "api_gateway.active_origin_verify_secret_key must select a key in api_gateway_origin_verify_secrets."
+    }
+
+    precondition {
+      condition     = local.api_gateway_enabled == false || (length(nonsensitive(keys(var.api_gateway_origin_verify_secrets))) >= 1 && length(nonsensitive(keys(var.api_gateway_origin_verify_secrets))) <= 2)
+      error_message = "api_gateway_origin_verify_secrets must contain one value normally, or two values temporarily during rotation."
+    }
+
+    precondition {
+      condition     = local.api_gateway_enabled == false || var.server_function.timeout * 1000 <= var.api_gateway.integration_timeout_milliseconds
+      error_message = "server_function.timeout must be less than or equal to api_gateway.integration_timeout_milliseconds."
+    }
+
+    precondition {
+      condition     = local.api_gateway_enabled == false || var.api_gateway.integration_timeout_milliseconds <= var.api_gateway.origin_response_timeout * 1000
+      error_message = "api_gateway.integration_timeout_milliseconds must be less than or equal to api_gateway.origin_response_timeout."
+    }
+  }
+}
+
+module "api_gateway" {
+  count  = local.api_gateway_enabled ? 1 : 0
+  source = "../tf-aws-open-next-api-gateway"
+
+  prefix = var.prefix
+  suffix = var.suffix
+
+  lambda_function_name = module.server_function.name
+  lambda_alias_name    = local.staging_alias
+  lambda_alias_arn     = module.server_function.alias_arns[local.staging_alias]
+
+  stage_name                       = var.api_gateway.stage_name
+  integration_timeout_milliseconds = var.api_gateway.integration_timeout_milliseconds
+  binary_media_types               = var.api_gateway.binary_media_types
+  cloudwatch_log_retention_days    = var.api_gateway.cloudwatch_log_retention_days
+  origin_verify_secrets            = var.api_gateway_origin_verify_secrets
+  waf_log_retention_days           = var.api_gateway.waf_logging.retention_days
+  waf_log_force_destroy            = var.api_gateway.waf_logging.force_destroy
+
+  providers = {
+    aws = aws.server_function
+  }
+
+  depends_on = [terraform_data.api_gateway_configuration]
 }
 
 resource "aws_lambda_permission" "server_function_url_permission" {

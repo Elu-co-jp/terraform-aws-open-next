@@ -1,9 +1,3 @@
-data "aws_region" "current" {}
-
-data "aws_caller_identity" "current" {}
-
-data "aws_partition" "current" {}
-
 # Route 53
 
 data "aws_route53_zone" "hosted_zone" {
@@ -17,11 +11,12 @@ data "aws_route53_zone" "hosted_zone" {
 # CloudFront
 
 data "aws_cloudfront_origin_request_policy" "all_viewer_except_host_header" {
-  name = "Managed-AllViewerExceptHostHeader"
+  # Use the fixed AWS managed policy ID because the name selector does not populate id.
+  id = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
 }
 
 data "aws_cloudfront_cache_policy" "caching_optimized" {
-  name = "Managed-CachingOptimized"
+  id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
 }
 
 # Zip Archives
