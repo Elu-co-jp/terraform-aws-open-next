@@ -71,3 +71,16 @@ output "api_gateway" {
     waf_logging                  = one(module.api_gateway[*].waf_logging)
   } : null
 }
+
+output "additional_server_functions" {
+  description = "Additional server Lambda details keyed by OpenNext origin name"
+  value = {
+    for name, function in module.additional_server_function : name => {
+      name                    = function.name
+      arn                     = function.arn
+      alias_arns              = function.alias_arns
+      url_hostnames           = function.url_hostnames
+      backend_deployment_type = local.additional_server_function_backend_deployment_types[name]
+    }
+  }
+}

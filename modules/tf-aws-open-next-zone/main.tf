@@ -41,6 +41,16 @@ locals {
   default_server_function     = local.origins != null ? lookup(local.origins, "default", {}) : {}
   image_optimisation_function = local.origins != null ? lookup(local.origins, "imageOptimizer", {}) : {}
   additional_server_functions = local.origins != null ? { for name, details in local.origins : name => details if contains(["s3", "imageOptimizer", "default"], name) == false } : {}
+  additional_server_function_backend_deployment_types = {
+    for name in keys(local.additional_server_functions) : name => coalesce(
+      try(var.additional_server_functions.function_overrides[name].backend_deployment_type, null),
+      var.additional_server_functions.backend_deployment_type,
+    )
+  }
+  cloudfront_additional_server_functions = {
+    for name, details in local.additional_server_functions : name => details
+    if local.additional_server_function_backend_deployment_types[name] != "REGIONAL_LAMBDA_INTERNAL"
+  }
 
   create_distribution = var.distribution.deployment == "CREATE"
   api_gateway_enabled = var.api_gateway.enabled
@@ -52,7 +62,7 @@ locals {
   edge_function_env_variables = {
     "OPEN_NEXT_ORIGIN" = jsonencode(merge(
       {
-        for name in keys(local.additional_server_functions) : name => {
+        for name in keys(local.cloudfront_additional_server_functions) : name => {
           "host"     = lookup(module.additional_server_function[name].url_hostnames, local.staging_alias, null)
           "protocol" = "https"
           "port"     = 443
@@ -132,18 +142,18 @@ locals {
         }
       )
     },
-    { for name, additional_server_function in local.additional_server_functions : name => {
+    { for name, additional_server_function in local.cloudfront_additional_server_functions : name => {
       domain_name         = lookup(module.additional_server_function[name].url_hostnames, local.staging_alias, null)
       backend_name        = module.additional_server_function[name].name
       arn                 = module.additional_server_function[name].arn
       path                = null
-      auth                = lookup(local.auth_options, try(var.additional_server_functions.function_overrides[name].backend_deployment_type, var.additional_server_functions.backend_deployment_type), null)
+      auth                = lookup(local.auth_options, local.additional_server_function_backend_deployment_types[name], null)
       headers             = null
       keepalive_timeout   = try(coalesce(try(var.additional_server_functions.function_overrides[name].origin_timeouts.keepalive_timeout, null), try(var.additional_server_functions.origin_timeouts.keepalive_timeout, null), try(var.origin_timeouts.keepalive_timeout, null)), null)
       read_timeout        = try(coalesce(try(var.additional_server_functions.function_overrides[name].origin_timeouts.read_timeout, null), try(var.additional_server_functions.origin_timeouts.read_timeout, null), try(var.origin_timeouts.read_timeout, null)), null)
       connection_attempts = try(coalesce(try(var.additional_server_functions.function_overrides[name].origin_timeouts.connection_attempts, null), try(var.additional_server_functions.origin_timeouts.connection_attempts, null), try(var.origin_timeouts.connection_attempts, null)), null)
       connection_timeout  = try(coalesce(try(var.additional_server_functions.function_overrides[name].origin_timeouts.connection_timeout, null), try(var.additional_server_functions.origin_timeouts.connection_timeout, null), try(var.origin_timeouts.connection_timeout, null)), null)
-    } if try(var.additional_server_functions.function_overrides[name].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "EDGE_LAMBDA" }
+    } if local.additional_server_function_backend_deployment_types[name] != "EDGE_LAMBDA" }
   )
   zone = {
     reinvalidation_hash = sha1(join("-", concat(module.s3_assets.file_hashes, [try(module.server_function.version, "")], [for edge_function in module.edge_function : edge_function.version], [for additional_server_function in module.additional_server_function : additional_server_function.version])))
@@ -168,7 +178,7 @@ locals {
     image_optimisation = merge(coalesce(local.user_supplied_behaviours.image_optimisation, { paths = null, path_overrides = null, allowed_methods = null, cached_methods = null, cache_policy_id = null, origin_request_policy_id = null, response_headers_policy_id = null, compress = null, viewer_protocol_policy = null, viewer_request = null, viewer_response = null, origin_request = null, origin_response = null, realtime_log_config_arn = null }), {
       paths = try(coalesce(try(local.user_supplied_behaviours.image_optimisation.paths, null), local.open_next_versions.v2 ? null : [for behavior in local.behaviors : behavior.pattern == "*" || startswith(behavior.pattern, "/") ? behavior.pattern : "/${behavior.pattern}" if behavior.origin == "imageOptimizer"]), null)
     })
-    additional_origins = { for name, additional_server_function in local.additional_server_functions : name => merge(coalesce(local.user_supplied_behaviours.additional_origins, { paths = null, path_overrides = null, allowed_methods = null, cached_methods = null, cache_policy_id = null, origin_request_policy_id = null, response_headers_policy_id = null, compress = null, viewer_protocol_policy = null, viewer_request = null, viewer_response = null, origin_request = null, origin_response = null, origin_reference = null, realtime_log_config_arn = null }), {
+    additional_origins = { for name, additional_server_function in local.cloudfront_additional_server_functions : name => merge(coalesce(local.user_supplied_behaviours.additional_origins, { paths = null, path_overrides = null, allowed_methods = null, cached_methods = null, cache_policy_id = null, origin_request_policy_id = null, response_headers_policy_id = null, compress = null, viewer_protocol_policy = null, viewer_request = null, viewer_response = null, origin_request = null, origin_response = null, origin_reference = null, realtime_log_config_arn = null }), {
       paths          = try(coalesce(try(local.user_supplied_behaviours.additional_origins[name].paths, null), local.open_next_versions.v2 ? null : [for behavior in local.behaviors : behavior.pattern == "*" || startswith(behavior.pattern, "/") ? behavior.pattern : "/${behavior.pattern}" if behavior.origin == name]), null)
       origin_request = try(local.user_supplied_behaviours.additional_origins[name].origin_request, null)
       path_overrides = merge(try(local.user_supplied_behaviours.additional_origins[name].path_overrides, {}), { for behavior in local.behaviors : behavior.pattern == "*" || startswith(behavior.pattern, "/") ? behavior.pattern : "/${behavior.pattern}" => { origin_request = { arn = module.edge_function[behavior["edgeFunction"]].qualified_arn, include_body = true } } if behavior.origin == name && lookup(behavior, "edgeFunction", null) != null })
@@ -626,7 +636,7 @@ module "additional_server_function" {
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_tag_mapping_db_access, null), try(var.additional_server_functions.iam_policies.include_tag_mapping_db_access, null)), false) == true ? local.tag_mapping_iam_policies : []
   )
 
-  environment_variables = try(var.additional_server_functions.function_overrides[each.key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) == "EDGE_LAMBDA" ? {} : merge(
+  environment_variables = local.additional_server_function_backend_deployment_types[each.key] == "EDGE_LAMBDA" ? {} : merge(
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_bucket_access, null), try(var.additional_server_functions.iam_policies.include_bucket_access, null)), false) == true ? local.cache_bucket_env_variables : {},
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_revalidation_queue_access, null), try(var.additional_server_functions.iam_policies.include_revalidation_queue_access, null)), false) == true ? local.revalidation_queue_env_variables : {},
     try(coalesce(try(var.additional_server_functions.function_overrides[each.key].iam_policies.include_tag_mapping_db_access, null), try(var.additional_server_functions.iam_policies.include_tag_mapping_db_access, null)), false) == true ? local.tag_mapping_env_variables : {},
@@ -650,9 +660,9 @@ module "additional_server_function" {
   }
 
   function_url = {
-    create              = true
-    authorization_type  = try(contains(["OAC", "AUTH_LAMBDA"], lookup(local.auth_options, try(var.additional_server_functions.function_overrides[each.key].backend_deployment_type, var.additional_server_functions.backend_deployment_type), null)), false) ? "AWS_IAM" : "NONE"
-    allow_any_principal = try(var.additional_server_functions.function_overrides[each.key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "REGIONAL_LAMBDA_WITH_OAC"
+    create              = !contains(["REGIONAL_LAMBDA_INTERNAL", "EDGE_LAMBDA"], local.additional_server_function_backend_deployment_types[each.key])
+    authorization_type  = try(contains(["OAC", "AUTH_LAMBDA"], lookup(local.auth_options, local.additional_server_function_backend_deployment_types[each.key], null)), false) ? "AWS_IAM" : "NONE"
+    allow_any_principal = local.additional_server_function_backend_deployment_types[each.key] != "REGIONAL_LAMBDA_WITH_OAC"
     enable_streaming    = coalesce(try(var.additional_server_functions.function_overrides[each.key].enable_streaming, var.additional_server_functions.enable_streaming, null), try(each.value.streaming, null), false)
   }
 
@@ -669,7 +679,7 @@ resource "aws_lambda_permission" "additional_server_function_url_permission" {
   for_each = merge([
     for key, additional_server_function in local.additional_server_functions : {
       for lambda_permission_key, lambda_permissions in local.lambda_permissions : "${key}-${lambda_permission_key}" => merge({ name = key }, additional_server_function, lambda_permissions)
-    } if try(var.additional_server_functions.function_overrides[key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "REGIONAL_LAMBDA_WITH_OAC"
+    } if try(local.zone_origins[key].auth, null) == "OAC"
   ]...)
 
   action                 = "lambda:InvokeFunctionUrl"
@@ -685,7 +695,7 @@ resource "aws_lambda_permission" "additional_server_function_invoke_permission" 
   for_each = merge([
     for key, additional_server_function in local.additional_server_functions : {
       for lambda_permission_key, lambda_permissions in local.lambda_permissions : "${key}-${lambda_permission_key}" => merge({ name = key }, additional_server_function, lambda_permissions)
-    } if try(var.additional_server_functions.function_overrides[key].backend_deployment_type, var.additional_server_functions.backend_deployment_type) != "REGIONAL_LAMBDA_WITH_OAC"
+    } if try(local.zone_origins[key].auth, null) == "OAC"
   ]...)
 
   action                   = "lambda:InvokeFunction"
@@ -916,6 +926,10 @@ module "revalidation_function" {
 
   prefix = var.prefix
   suffix = var.suffix
+
+  function_url = {
+    create = false
+  }
 
   scripts = var.scripts
 

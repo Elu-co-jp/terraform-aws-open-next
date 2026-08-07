@@ -422,11 +422,14 @@ variable "additional_server_functions" {
   description = <<EOF
 Default configutation for all additional server functions with the ability to override the configuration per function.
 
+Additional functions use REGIONAL_LAMBDA_INTERNAL by default. Select another backend deployment type globally or in a function override when the function must be reachable through CloudFront.
+
 This feature requires open next v3.
 
 By default, the module will create a new zip from the server function code on disk. However, you can override this by supplying a zip file containing the lambda code with either a local reference or a reference to the zip in an S3 bucket.
 
 Possible values for backend_deployment_type: 
+  - REGIONAL_LAMBDA_INTERNAL
   - REGIONAL_LAMBDA_WITH_AUTH_LAMBDA
   - REGIONAL_LAMBDA_WITH_OAC
   - REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL
@@ -441,7 +444,7 @@ EOF
   type = object({
     enable_streaming                 = optional(bool)
     runtime                          = optional(string, "nodejs20.x")
-    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
     timeout                          = optional(number, 10)
     memory_size                      = optional(number, 1024)
     function_architecture            = optional(string)
@@ -507,7 +510,7 @@ EOF
       }))
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string)
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -1726,7 +1729,7 @@ variable "zones" {
     additional_server_functions = optional(object({
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -1792,7 +1795,7 @@ variable "zones" {
         }))
         enable_streaming                 = optional(bool)
         runtime                          = optional(string, "nodejs20.x")
-        backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+        backend_deployment_type          = optional(string)
         timeout                          = optional(number, 10)
         memory_size                      = optional(number, 1024)
         function_architecture            = optional(string)

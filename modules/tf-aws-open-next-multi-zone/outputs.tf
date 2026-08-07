@@ -29,6 +29,7 @@ output "zones" {
     cloudfront_staging_distribution_id = module.website_zone[zone.name].cloudfront_staging_distribution_id
     alternate_domain_names             = module.website_zone[zone.name].alternate_domain_names
     bucket_name                        = module.website_zone[zone.name].bucket_name
+    additional_server_functions        = module.website_zone[zone.name].additional_server_functions
     }
   ]
 }

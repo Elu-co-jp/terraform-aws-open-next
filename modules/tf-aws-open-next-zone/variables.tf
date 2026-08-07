@@ -420,11 +420,14 @@ variable "additional_server_functions" {
   description = <<EOF
 Default configutation for all additional server functions with the ability to override the configuration per function.
 
+Additional functions use REGIONAL_LAMBDA_INTERNAL by default: the Lambda and aliases are created without a Function URL or CloudFront origin/behaviour. Select another backend deployment type globally or in a function override when the function must be reachable through CloudFront.
+
 This feature requires open next v3.
 
 By default, the module will create a new zip from the server function code on disk. However, you can override this by supplying a zip file containing the lambda code with either a local reference or a reference to the zip in an S3 bucket.
 
 Possible values for backend_deployment_type: 
+  - REGIONAL_LAMBDA_INTERNAL
   - REGIONAL_LAMBDA_WITH_AUTH_LAMBDA
   - REGIONAL_LAMBDA_WITH_OAC
   - REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL
@@ -437,7 +440,7 @@ EOF
   type = object({
     enable_streaming                 = optional(bool)
     runtime                          = optional(string, "nodejs20.x")
-    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
     timeout                          = optional(number, 10)
     memory_size                      = optional(number, 1024)
     function_architecture            = optional(string)
@@ -503,7 +506,7 @@ EOF
       }))
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string)
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -559,8 +562,11 @@ EOF
   default = {}
 
   validation {
-    condition     = contains(["REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA"], var.additional_server_functions.backend_deployment_type) && alltrue([for name, function_override in var.additional_server_functions.function_overrides : contains(["REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA", "EDGE_LAMBDA"], function_override.backend_deployment_type)])
-    error_message = "The backend deployment type of all additional functions must be one of REGIONAL_LAMBDA_WITH_AUTH_LAMBDA, REGIONAL_LAMBDA_WITH_OAC, REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL or REGIONAL_LAMBDA"
+    condition = contains(["REGIONAL_LAMBDA_INTERNAL", "REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA"], var.additional_server_functions.backend_deployment_type) && alltrue([
+      for function_override in values(var.additional_server_functions.function_overrides) :
+      function_override.backend_deployment_type == null || contains(["REGIONAL_LAMBDA_INTERNAL", "REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA", "EDGE_LAMBDA"], function_override.backend_deployment_type)
+    ])
+    error_message = "The backend deployment type of all additional functions must be one of REGIONAL_LAMBDA_INTERNAL, REGIONAL_LAMBDA_WITH_AUTH_LAMBDA, REGIONAL_LAMBDA_WITH_OAC, REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL, REGIONAL_LAMBDA or EDGE_LAMBDA"
   }
 }
 
