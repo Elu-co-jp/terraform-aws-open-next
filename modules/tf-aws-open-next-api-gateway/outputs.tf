@@ -3,6 +3,11 @@ output "rest_api_id" {
   value       = aws_api_gateway_rest_api.this.id
 }
 
+output "rest_api_name" {
+  description = "REST API name used by CloudWatch ApiName dimensions"
+  value       = aws_api_gateway_rest_api.this.name
+}
+
 output "execution_arn" {
   description = "REST API execution ARN"
   value       = aws_api_gateway_rest_api.this.execution_arn

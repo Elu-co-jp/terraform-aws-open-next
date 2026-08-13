@@ -35,3 +35,5 @@ The API Gateway account-level CloudWatch role must already exist in the applicat
 If execution logging was enabled before this module started managing its execution log group, import the existing `API-Gateway-Execution-Logs_<rest-api-id>/<stage-name>` group into `aws_cloudwatch_log_group.execution_logs` before applying.
 
 The default execute-api endpoint remains enabled because it is the CloudFront origin. Direct requests are rejected by the Regional WAF unless they satisfy both origin checks.
+
+The module exports both `rest_api_id` and `rest_api_name`. Use `rest_api_name` with `stage_name` for REST API CloudWatch metric dimensions such as `5XXError`.

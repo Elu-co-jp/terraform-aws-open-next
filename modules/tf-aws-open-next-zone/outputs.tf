@@ -62,6 +62,7 @@ output "api_gateway" {
   description = "Regional REST API Gateway origin configuration"
   value = local.api_gateway_enabled ? {
     rest_api_id                  = one(module.api_gateway[*].rest_api_id)
+    rest_api_name                = one(module.api_gateway[*].rest_api_name)
     execution_arn                = one(module.api_gateway[*].execution_arn)
     stage_name                   = one(module.api_gateway[*].stage_name)
     origin_domain_name           = one(module.api_gateway[*].origin_domain_name)
@@ -70,6 +71,16 @@ output "api_gateway" {
     cloudfront_origin_ipv4_cidrs = one(module.api_gateway[*].cloudfront_origin_ipv4_cidrs)
     waf_logging                  = one(module.api_gateway[*].waf_logging)
   } : null
+}
+
+output "server_function" {
+  description = "Default server Lambda details"
+  value = {
+    name          = module.server_function.name
+    arn           = module.server_function.arn
+    alias_arns    = module.server_function.alias_arns
+    url_hostnames = module.server_function.url_hostnames
+  }
 }
 
 output "additional_server_functions" {
