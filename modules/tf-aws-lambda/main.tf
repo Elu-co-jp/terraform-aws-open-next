@@ -115,21 +115,23 @@ resource "aws_lambda_function_url" "function_url" {
 }
 
 resource "aws_lambda_permission" "function_url_permission" {
-  count = var.run_at_edge == false && var.function_url.create && var.function_url.allow_any_principal ? 1 : 0
+  for_each = var.run_at_edge == false && var.function_url.create && var.function_url.allow_any_principal ? toset(local.alias_names) : []
 
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.lambda_function.function_name
   principal              = "*"
+  qualifier              = aws_lambda_alias.lambda_alias[each.value].name
   function_url_auth_type = var.function_url.authorization_type
 }
 
 # Companion to function_url_permission for the Oct 2025 Lambda Function URL dual-auth change: callers must be authorized for both lambda:InvokeFunctionUrl and lambda:InvokeFunction.
 resource "aws_lambda_permission" "function_url_invoke_permission" {
-  count = var.run_at_edge == false && var.function_url.create && var.function_url.allow_any_principal ? 1 : 0
+  for_each = var.run_at_edge == false && var.function_url.create && var.function_url.allow_any_principal ? toset(local.alias_names) : []
 
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.lambda_function.function_name
   principal                = "*"
+  qualifier                = aws_lambda_alias.lambda_alias[each.value].name
   invoked_via_function_url = true
 }
 

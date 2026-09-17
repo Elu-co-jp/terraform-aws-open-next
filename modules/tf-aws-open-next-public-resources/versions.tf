@@ -8,7 +8,7 @@ terraform {
     }
     aws = {
       source                = "hashicorp/aws"
-      version               = ">= 5.46.0"
+      version               = ">= 6.29.0"
       configuration_aliases = [aws.iam, aws.dns]
     }
     terraform = {
