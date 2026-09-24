@@ -52,3 +52,46 @@ output "response_headers_policy_id" {
   description = "The ID of the response header policy"
   value       = one(module.public_resources[*].response_headers_policy_id)
 }
+
+output "waf_logging" {
+  description = "The WAF full logging configuration and dedicated S3 destination"
+  value       = local.create_distribution ? one(module.public_resources[*].waf_logging) : null
+}
+
+output "api_gateway" {
+  description = "Regional REST API Gateway origin configuration"
+  value = local.api_gateway_enabled ? {
+    rest_api_id                  = one(module.api_gateway[*].rest_api_id)
+    rest_api_name                = one(module.api_gateway[*].rest_api_name)
+    execution_arn                = one(module.api_gateway[*].execution_arn)
+    stage_name                   = one(module.api_gateway[*].stage_name)
+    origin_domain_name           = one(module.api_gateway[*].origin_domain_name)
+    origin_path                  = one(module.api_gateway[*].origin_path)
+    web_acl_arn                  = one(module.api_gateway[*].web_acl_arn)
+    cloudfront_origin_ipv4_cidrs = one(module.api_gateway[*].cloudfront_origin_ipv4_cidrs)
+    waf_logging                  = one(module.api_gateway[*].waf_logging)
+  } : null
+}
+
+output "server_function" {
+  description = "Default server Lambda details"
+  value = {
+    name          = module.server_function.name
+    arn           = module.server_function.arn
+    alias_arns    = module.server_function.alias_arns
+    url_hostnames = module.server_function.url_hostnames
+  }
+}
+
+output "additional_server_functions" {
+  description = "Additional server Lambda details keyed by OpenNext origin name"
+  value = {
+    for name, function in module.additional_server_function : name => {
+      name                    = function.name
+      arn                     = function.arn
+      alias_arns              = function.alias_arns
+      url_hostnames           = function.url_hostnames
+      backend_deployment_type = local.additional_server_function_backend_deployment_types[name]
+    }
+  }
+}

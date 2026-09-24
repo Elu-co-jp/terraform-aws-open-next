@@ -2,6 +2,22 @@
 
 Several options exist to deploy the backend.
 
+## Internal additional server functions
+
+OpenNext additional server functions use `REGIONAL_LAMBDA_INTERNAL` by default. The module creates the Lambda function and aliases, but does not create a Function URL, CloudFront origin or CloudFront behaviour. This is suitable for functions invoked through the Lambda API, such as scheduled workers.
+
+Select one of the other `backend_deployment_type` values on `additional_server_functions` or a specific `function_overrides` entry to publish an additional function through CloudFront.
+
+```tf
+additional_server_functions = {
+  function_overrides = {
+    public_api = {
+      backend_deployment_type = "REGIONAL_LAMBDA_WITH_OAC"
+    }
+  }
+}
+```
+
 By default, all zones will use the same deployment options; however, you can override the deployment options for each zone. See the module documentation below for more information.
 
 The backend options are as follows:

@@ -140,9 +140,9 @@ variable "aliases" {
 }
 
 variable "cache_control_immutable_assets_regex" {
-  description = "Regex to set public,max-age=31536000,immutable on immutable resources. This can be overridden for each zone"
+  description = "Regex matching content-hashed assets (default: everything under _next/static/, including under a basePath, e.g. docs/_next/static) to set their Cache-Control response header to public,max-age=31536000,immutable. This can be overridden for each zone"
   type        = string
-  default     = "^.*(\\.next)$"
+  default     = "^(?:.*/)?_next/static/.*$"
 }
 
 variable "content_types" {
@@ -422,11 +422,14 @@ variable "additional_server_functions" {
   description = <<EOF
 Default configutation for all additional server functions with the ability to override the configuration per function.
 
+Additional functions use REGIONAL_LAMBDA_INTERNAL by default. Select another backend deployment type globally or in a function override when the function must be reachable through CloudFront.
+
 This feature requires open next v3.
 
 By default, the module will create a new zip from the server function code on disk. However, you can override this by supplying a zip file containing the lambda code with either a local reference or a reference to the zip in an S3 bucket.
 
 Possible values for backend_deployment_type: 
+  - REGIONAL_LAMBDA_INTERNAL
   - REGIONAL_LAMBDA_WITH_AUTH_LAMBDA
   - REGIONAL_LAMBDA_WITH_OAC
   - REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL
@@ -441,7 +444,7 @@ EOF
   type = object({
     enable_streaming                 = optional(bool)
     runtime                          = optional(string, "nodejs20.x")
-    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
     timeout                          = optional(number, 10)
     memory_size                      = optional(number, 1024)
     function_architecture            = optional(string)
@@ -507,7 +510,7 @@ EOF
       }))
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string)
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -1230,6 +1233,8 @@ variable "waf" {
   description = <<EOF
 Configuration for the CloudFront distribution WAF.
 
+Set logging to create a dedicated S3 bucket and enable full Web ACL logging. retention_days controls object expiration and defaults to 90 days, and redacted_headers configures selected fields for redaction.
+
 When the deployment is set to 'INDEPENDENT_ZONES' this can be overridden for each zone. If deployment is 'SHARED_DISTRIBUTION' or 'SHARED_DISTRIBUTION_AND_BUCKET' this configuration is used"
 
 Possible values for the WAF deployment are:
@@ -1245,6 +1250,8 @@ When configuring basic authentication, the encoded username and password are mar
 Possible values for the WAF default action are:
 - ALLOW
 - BLOCK
+
+Each AWS managed rule group accepts COUNT or NONE as its override_action.
 
 The module provides the ability to configure recommended WAF rules to guard against SQL Injection (sqli), account takeover protection and account creation fraud prevention.
 
@@ -1267,10 +1274,16 @@ EOF
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
+    logging = optional(object({
+      force_destroy    = optional(bool, false)
+      retention_days   = optional(number, 90)
+      redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+    }))
     aws_managed_rules = optional(list(object({
       priority              = optional(number)
       name                  = string
       aws_managed_rule_name = string
+      override_action       = optional(string, "NONE")
       })), [{
       name                  = "amazon-ip-reputation-list"
       aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -1292,12 +1305,14 @@ EOF
       })), [])
     }), {})
     sqli = optional(object({
-      enabled  = optional(bool, false)
-      priority = optional(number)
+      enabled         = optional(bool, false)
+      priority        = optional(number)
+      override_action = optional(string, "NONE")
     }), {})
     account_takeover_protection = optional(object({
       enabled              = optional(bool, false)
       priority             = optional(number)
+      override_action      = optional(string, "NONE")
       login_path           = string
       enable_regex_in_path = optional(bool)
       request_inspection = optional(object({
@@ -1313,6 +1328,7 @@ EOF
     account_creation_fraud_prevention = optional(object({
       enabled                = optional(bool, false)
       priority               = optional(number)
+      override_action        = optional(string, "NONE")
       creation_path          = string
       registration_page_path = string
       enable_regex_in_path   = optional(bool)
@@ -1365,6 +1381,10 @@ EOF
         arn    = optional(string)
         name   = optional(string)
       }))
+      uri_path_exclusions = optional(list(object({
+        path                  = string
+        positional_constraint = optional(string, "EXACTLY")
+      })), [])
     })))
     default_action = optional(object({
       action = optional(string, "ALLOW")
@@ -1709,7 +1729,7 @@ variable "zones" {
     additional_server_functions = optional(object({
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -1775,7 +1795,7 @@ variable "zones" {
         }))
         enable_streaming                 = optional(bool)
         runtime                          = optional(string, "nodejs20.x")
-        backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+        backend_deployment_type          = optional(string)
         timeout                          = optional(number, 10)
         memory_size                      = optional(number, 1024)
         function_architecture            = optional(string)
@@ -2308,10 +2328,16 @@ variable "zones" {
     waf = optional(object({
       deployment = optional(string, "NONE")
       web_acl_id = optional(string)
+      logging = optional(object({
+        force_destroy    = optional(bool, false)
+        retention_days   = optional(number, 90)
+        redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+      }))
       aws_managed_rules = optional(list(object({
         priority              = optional(number)
         name                  = string
         aws_managed_rule_name = string
+        override_action       = optional(string, "NONE")
         })), [{
         name                  = "amazon-ip-reputation-list"
         aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -2333,12 +2359,14 @@ variable "zones" {
         })), [])
       }), {})
       sqli = optional(object({
-        enabled  = optional(bool, false)
-        priority = optional(number)
+        enabled         = optional(bool, false)
+        priority        = optional(number)
+        override_action = optional(string, "NONE")
       }), {})
       account_takeover_protection = optional(object({
         enabled              = optional(bool, false)
         priority             = optional(number)
+        override_action      = optional(string, "NONE")
         login_path           = string
         enable_regex_in_path = optional(bool)
         request_inspection = optional(object({
@@ -2354,6 +2382,7 @@ variable "zones" {
       account_creation_fraud_prevention = optional(object({
         enabled                = optional(bool, false)
         priority               = optional(number)
+        override_action        = optional(string, "NONE")
         creation_path          = string
         registration_page_path = string
         enable_regex_in_path   = optional(bool)
@@ -2406,6 +2435,10 @@ variable "zones" {
           arn    = optional(string)
           name   = optional(string)
         }))
+        uri_path_exclusions = optional(list(object({
+          path                  = string
+          positional_constraint = optional(string, "EXACTLY")
+        })), [])
       })))
       default_action = optional(object({
         action = optional(string, "ALLOW")

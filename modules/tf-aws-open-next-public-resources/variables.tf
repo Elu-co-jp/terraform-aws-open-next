@@ -263,6 +263,13 @@ variable "zones" {
   }
 }
 
+variable "sensitive_origin_headers" {
+  description = "Sensitive CloudFront custom origin header values keyed by origin ID and then header name. Header names must also exist in zones[*].origins[*].headers."
+  type        = map(map(string))
+  default     = {}
+  sensitive   = true
+}
+
 variable "behaviours" {
   description = "Override the default behaviour config"
   type = object({
@@ -704,14 +711,20 @@ variable "behaviours" {
 }
 
 variable "waf" {
-  description = "Configuration for the CloudFront distribution WAF. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
+  description = "Configuration for the CloudFront distribution WAF. Setting logging creates a dedicated S3 bucket and enables full Web ACL logging. Each AWS managed rule group accepts COUNT or NONE as its override_action. For enforce basic auth, to protect the secret value, the encoded string has been marked as sensitive. I would make this configurable to allow it to be marked as sensitive or not however Terraform panics when you use the sensitive function as part of a ternary. If you need to see all rules, see this discussion https://discuss.hashicorp.com/t/how-to-show-sensitive-values/24076/4"
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
+    logging = optional(object({
+      force_destroy    = optional(bool, false)
+      retention_days   = optional(number, 90)
+      redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+    }))
     aws_managed_rules = optional(list(object({
       priority              = optional(number)
       name                  = string
       aws_managed_rule_name = string
+      override_action       = optional(string, "NONE")
       })), [{
       name                  = "amazon-ip-reputation-list"
       aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -733,12 +746,14 @@ variable "waf" {
       })), [])
     }), {})
     sqli = optional(object({
-      enabled  = optional(bool, false)
-      priority = optional(number)
+      enabled         = optional(bool, false)
+      priority        = optional(number)
+      override_action = optional(string, "NONE")
     }), {})
     account_takeover_protection = optional(object({
       enabled              = optional(bool, false)
       priority             = optional(number)
+      override_action      = optional(string, "NONE")
       login_path           = string
       enable_regex_in_path = optional(bool)
       request_inspection = optional(object({
@@ -754,6 +769,7 @@ variable "waf" {
     account_creation_fraud_prevention = optional(object({
       enabled                = optional(bool, false)
       priority               = optional(number)
+      override_action        = optional(string, "NONE")
       creation_path          = string
       registration_page_path = string
       enable_regex_in_path   = optional(bool)
@@ -806,6 +822,10 @@ variable "waf" {
         arn    = optional(string)
         name   = optional(string)
       }))
+      uri_path_exclusions = optional(list(object({
+        path                  = string
+        positional_constraint = optional(string, "EXACTLY")
+      })), [])
     })))
     default_action = optional(object({
       action = optional(string, "ALLOW")
@@ -842,8 +862,23 @@ variable "waf" {
   }
 
   validation {
+    condition     = var.waf.logging == null ? true : contains(["CREATE", "USE_EXISTING"], var.waf.deployment)
+    error_message = "WAF logging requires the WAF deployment to be CREATE or USE_EXISTING"
+  }
+
+  validation {
     condition     = var.waf.default_action == null ? true : contains(["ALLOW", "BLOCK"], var.waf.default_action.action)
     error_message = "The WAF default action can be one of ALLOW or BLOCK"
+  }
+
+  validation {
+    condition = (
+      alltrue([for rule in var.waf.aws_managed_rules : contains(["COUNT", "NONE"], rule.override_action)]) &&
+      contains(["COUNT", "NONE"], var.waf.sqli.override_action) &&
+      try(contains(["COUNT", "NONE"], var.waf.account_takeover_protection.override_action), true) &&
+      try(contains(["COUNT", "NONE"], var.waf.account_creation_fraud_prevention.override_action), true)
+    )
+    error_message = "Each AWS managed rule group override action must be either COUNT or NONE"
   }
 
   validation {
@@ -860,6 +895,26 @@ variable "waf" {
       ]
     ]))
     error_message = "All IP address restriction actions must be either BYPASS or BLOCK for each additional rule"
+  }
+
+  validation {
+    condition = var.waf.additional_rules == null ? true : alltrue(flatten([
+      for additional_rule in var.waf.additional_rules : [
+        for exclusion in additional_rule.uri_path_exclusions :
+        contains(["EXACTLY", "STARTS_WITH"], exclusion.positional_constraint) &&
+        startswith(exclusion.path, "/")
+      ]
+    ]))
+    error_message = "All URI path exclusions must start with / and use EXACTLY or STARTS_WITH"
+  }
+
+  validation {
+    condition = var.waf.additional_rules == null ? true : alltrue([
+      for additional_rule in var.waf.additional_rules :
+      length(additional_rule.uri_path_exclusions) == 0 ||
+      length(additional_rule.ip_address_restrictions) > 0
+    ])
+    error_message = "Additional rules with URI path exclusions must include at least one IP address restriction"
   }
 
   validation {

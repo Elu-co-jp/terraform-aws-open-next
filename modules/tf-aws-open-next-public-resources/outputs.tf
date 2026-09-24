@@ -46,16 +46,28 @@ output "aliases" {
 output "distribution" {
   description = "The configuration of the cloudfront distribution. These are added to aid with testing"
   value       = var.continuous_deployment.use ? one(aws_cloudfront_distribution.production_distribution[*]) : one(aws_cloudfront_distribution.website_distribution[*])
+  sensitive   = true
 }
 
 output "staging_distribution" {
   description = "The configuration of the cloudfront distribution. These are added to aid with testing"
   value       = try(one(aws_cloudfront_distribution.staging_distribution[*]), null)
+  sensitive   = true
 }
 
 output "waf" {
   description = "The configuration of the WAF ACL. These are added to aid with testing"
   value       = try(one(aws_wafv2_web_acl.distribution_waf[*]), null)
+}
+
+output "waf_logging" {
+  description = "The WAF full logging configuration and dedicated S3 destination"
+  value = local.waf_logging_enabled ? {
+    bucket_name      = one(module.waf_logging[*].bucket_name)
+    bucket_arn       = one(module.waf_logging[*].bucket_arn)
+    retention_days   = one(module.waf_logging[*].retention_days)
+    redacted_headers = one(module.waf_logging[*].redacted_headers)
+  } : null
 }
 
 output "cache_policy_id" {

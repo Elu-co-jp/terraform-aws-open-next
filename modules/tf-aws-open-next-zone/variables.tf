@@ -140,9 +140,9 @@ variable "aliases" {
 }
 
 variable "cache_control_immutable_assets_regex" {
-  description = "Regex to set public,max-age=31536000,immutable on immutable resources"
+  description = "Regex matching content-hashed assets (default: everything under _next/static/, including under a basePath, e.g. docs/_next/static) to set their Cache-Control response header to public,max-age=31536000,immutable"
   type        = string
-  default     = "^.*(\\.next)$"
+  default     = "^(?:.*/)?_next/static/.*$"
 }
 
 variable "content_types" {
@@ -420,11 +420,14 @@ variable "additional_server_functions" {
   description = <<EOF
 Default configutation for all additional server functions with the ability to override the configuration per function.
 
+Additional functions use REGIONAL_LAMBDA_INTERNAL by default: the Lambda and aliases are created without a Function URL or CloudFront origin/behaviour. Select another backend deployment type globally or in a function override when the function must be reachable through CloudFront.
+
 This feature requires open next v3.
 
 By default, the module will create a new zip from the server function code on disk. However, you can override this by supplying a zip file containing the lambda code with either a local reference or a reference to the zip in an S3 bucket.
 
 Possible values for backend_deployment_type: 
+  - REGIONAL_LAMBDA_INTERNAL
   - REGIONAL_LAMBDA_WITH_AUTH_LAMBDA
   - REGIONAL_LAMBDA_WITH_OAC
   - REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL
@@ -437,7 +440,7 @@ EOF
   type = object({
     enable_streaming                 = optional(bool)
     runtime                          = optional(string, "nodejs20.x")
-    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+    backend_deployment_type          = optional(string, "REGIONAL_LAMBDA_INTERNAL")
     timeout                          = optional(number, 10)
     memory_size                      = optional(number, 1024)
     function_architecture            = optional(string)
@@ -503,7 +506,7 @@ EOF
       }))
       enable_streaming                 = optional(bool)
       runtime                          = optional(string, "nodejs20.x")
-      backend_deployment_type          = optional(string, "REGIONAL_LAMBDA")
+      backend_deployment_type          = optional(string)
       timeout                          = optional(number, 10)
       memory_size                      = optional(number, 1024)
       function_architecture            = optional(string)
@@ -559,8 +562,11 @@ EOF
   default = {}
 
   validation {
-    condition     = contains(["REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA"], var.additional_server_functions.backend_deployment_type) && alltrue([for name, function_override in var.additional_server_functions.function_overrides : contains(["REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA", "EDGE_LAMBDA"], function_override.backend_deployment_type)])
-    error_message = "The backend deployment type of all additional functions must be one of REGIONAL_LAMBDA_WITH_AUTH_LAMBDA, REGIONAL_LAMBDA_WITH_OAC, REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL or REGIONAL_LAMBDA"
+    condition = contains(["REGIONAL_LAMBDA_INTERNAL", "REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA"], var.additional_server_functions.backend_deployment_type) && alltrue([
+      for function_override in values(var.additional_server_functions.function_overrides) :
+      function_override.backend_deployment_type == null || contains(["REGIONAL_LAMBDA_INTERNAL", "REGIONAL_LAMBDA_WITH_AUTH_LAMBDA", "REGIONAL_LAMBDA_WITH_OAC", "REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL", "REGIONAL_LAMBDA", "EDGE_LAMBDA"], function_override.backend_deployment_type)
+    ])
+    error_message = "The backend deployment type of all additional functions must be one of REGIONAL_LAMBDA_INTERNAL, REGIONAL_LAMBDA_WITH_AUTH_LAMBDA, REGIONAL_LAMBDA_WITH_OAC, REGIONAL_LAMBDA_WITH_OAC_AND_ANY_PRINCIPAL, REGIONAL_LAMBDA or EDGE_LAMBDA"
   }
 }
 
@@ -718,6 +724,41 @@ EOF
     }), {})
   })
   default = {}
+}
+
+variable "api_gateway" {
+  description = "Regional REST API Gateway configuration for the default OpenNext Server Lambda. When enabled, CloudFront uses API Gateway instead of the public Server Lambda Function URL."
+  type = object({
+    enabled                          = optional(bool, false)
+    stage_name                       = optional(string, "stable")
+    integration_timeout_milliseconds = optional(number, 29000)
+    origin_response_timeout          = optional(number, 30)
+    cloudwatch_log_retention_days    = optional(number, 90)
+    binary_media_types               = optional(list(string), ["*/*"])
+    active_origin_verify_secret_key  = optional(string)
+    waf_logging = optional(object({
+      force_destroy  = optional(bool, false)
+      retention_days = optional(number, 90)
+    }), {})
+  })
+  default = {}
+
+  validation {
+    condition     = var.api_gateway.integration_timeout_milliseconds >= 50 && var.api_gateway.integration_timeout_milliseconds <= 300000
+    error_message = "api_gateway.integration_timeout_milliseconds must be between 50 and 300000. Values above the account quota require an approved API Gateway quota increase."
+  }
+
+  validation {
+    condition     = var.api_gateway.origin_response_timeout >= 1 && var.api_gateway.origin_response_timeout <= 300
+    error_message = "api_gateway.origin_response_timeout must be between 1 and 300 seconds."
+  }
+}
+
+variable "api_gateway_origin_verify_secrets" {
+  description = "Resolved X-Origin-Verify secret values keyed by stable logical name. Supply one normally, or two temporarily during rotation."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
 }
 
 variable "tag_mapping_db" {
@@ -1248,6 +1289,8 @@ variable "waf" {
   description = <<EOF
 Configuration for the CloudFront distribution WAF.
 
+Set logging to create a dedicated S3 bucket and enable full Web ACL logging. retention_days controls object expiration and defaults to 90 days, and redacted_headers configures selected fields for redaction.
+
 Possible values for the WAF deployment are:
 - NONE 
 - USE_EXISTING
@@ -1261,6 +1304,8 @@ When configuring basic authentication, the encoded username and password are mar
 Possible values for the WAF default action are:
 - ALLOW
 - BLOCK
+
+Each AWS managed rule group accepts COUNT or NONE as its override_action.
 
 The module provides the ability to configure recommended WAF rules to guard against SQL Injection (sqli), account takeover protection and account creation fraud prevention.
 
@@ -1283,10 +1328,16 @@ EOF
   type = object({
     deployment = optional(string, "NONE")
     web_acl_id = optional(string)
+    logging = optional(object({
+      force_destroy    = optional(bool, false)
+      retention_days   = optional(number, 90)
+      redacted_headers = optional(list(string), ["authorization", "apikey", "cookie", "x-api-key"])
+    }))
     aws_managed_rules = optional(list(object({
       priority              = optional(number)
       name                  = string
       aws_managed_rule_name = string
+      override_action       = optional(string, "NONE")
       })), [{
       name                  = "amazon-ip-reputation-list"
       aws_managed_rule_name = "AWSManagedRulesAmazonIpReputationList"
@@ -1308,12 +1359,14 @@ EOF
       })), [])
     }), {})
     sqli = optional(object({
-      enabled  = optional(bool, false)
-      priority = optional(number)
+      enabled         = optional(bool, false)
+      priority        = optional(number)
+      override_action = optional(string, "NONE")
     }), {})
     account_takeover_protection = optional(object({
       enabled              = optional(bool, false)
       priority             = optional(number)
+      override_action      = optional(string, "NONE")
       login_path           = string
       enable_regex_in_path = optional(bool)
       request_inspection = optional(object({
@@ -1329,6 +1382,7 @@ EOF
     account_creation_fraud_prevention = optional(object({
       enabled                = optional(bool, false)
       priority               = optional(number)
+      override_action        = optional(string, "NONE")
       creation_path          = string
       registration_page_path = string
       enable_regex_in_path   = optional(bool)
@@ -1381,6 +1435,10 @@ EOF
         arn    = optional(string)
         name   = optional(string)
       }))
+      uri_path_exclusions = optional(list(object({
+        path                  = string
+        positional_constraint = optional(string, "EXACTLY")
+      })), [])
     })))
     default_action = optional(object({
       action = optional(string, "ALLOW")

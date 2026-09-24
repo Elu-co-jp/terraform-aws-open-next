@@ -18,6 +18,11 @@ output "qualified_arn" {
   value       = aws_lambda_function.lambda_function.qualified_arn
 }
 
+output "alias_arns" {
+  description = "Lambda alias ARNs keyed by alias name"
+  value       = { for name, alias in aws_lambda_alias.lambda_alias : name => alias.arn }
+}
+
 output "url_hostnames" {
   description = "The hostname for the lambda function urls"
   value       = length(aws_lambda_function_url.function_url) > 0 ? { for url in aws_lambda_function_url.function_url : url.qualifier => trimsuffix(trimprefix(aws_lambda_function_url.function_url[url.qualifier].function_url, "https://"), "/") } : {}
